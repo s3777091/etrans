@@ -16,8 +16,19 @@ interface RealtimeMessage {
   text?: string;
   stash?: string;
   transcript?: string;
+  delta?: string;
+  response?: {
+    status?: string;
+    status_details?: { reason?: string };
+  };
   error?: { code?: string; message?: string };
 }
+
+const TRANSCRIPTION_LANGUAGE_NAMES: Record<AgentLanguage, string> = {
+  vi: "Vietnamese",
+  zh: "Chinese",
+  en: "English",
+};
 
 export class TranscriptionError extends Error {
   constructor(
@@ -65,11 +76,19 @@ export function pcmFromWavDataUrl(value: string): Buffer | undefined {
 export function createAsrSessionUpdate(
   language: AgentLanguage,
 ): Record<string, unknown> {
+  const languageName = TRANSCRIPTION_LANGUAGE_NAMES[language];
   return {
     event_id: "event_asr_session_update",
     type: "session.update",
     session: {
       modalities: ["text"],
+      instructions: [
+        `You are a ${languageName} speech transcription engine, not an assistant or translator.`,
+        `The audio language is fixed as ${languageName} by the user interface; never auto-detect or switch languages.`,
+        `Write exactly what the speaker says in ${languageName}.`,
+        "Do not translate, answer, explain, summarize, or add a label.",
+        `Return only the verbatim ${languageName} transcript.`,
+      ].join(" "),
       input_audio_format: "pcm",
       turn_detection: null,
       input_audio_transcription: {
@@ -171,7 +190,8 @@ function runRealtimeTranscription(
       { headers: { Authorization: `Bearer ${config.dashscopeApiKey}` } },
     );
     let settled = false;
-    let partial = "";
+    let inputTranscript = "";
+    let responseTranscript = "";
     let audioOffset = 0;
     let audioTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -187,7 +207,7 @@ function runRealtimeTranscription(
         socket.close(1000, "Transcription complete");
       }
       if (outcome.error) reject(outcome.error);
-      else resolve(outcome.text ?? partial);
+      else resolve(outcome.text ?? (responseTranscript || inputTranscript));
     };
 
     const timeout = setTimeout(
@@ -205,6 +225,12 @@ function runRealtimeTranscription(
       if (settled || socket.readyState !== WebSocket.OPEN) return;
       if (audioOffset >= pcm.length) {
         socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        socket.send(
+          JSON.stringify({
+            type: "response.create",
+            response: { modalities: ["text"] },
+          }),
+        );
         return;
       }
       const chunk = pcm.subarray(
@@ -263,12 +289,34 @@ function runRealtimeTranscription(
           sendNextAudioChunk();
           break;
         case "conversation.item.input_audio_transcription.delta":
-          partial = `${message.text ?? ""}${message.stash ?? ""}`;
+          inputTranscript = `${message.text ?? ""}${message.stash ?? ""}`;
           break;
         case "conversation.item.input_audio_transcription.completed":
-          finish({ text: message.transcript ?? partial });
+          inputTranscript = message.transcript ?? inputTranscript;
+          break;
+        case "response.text.delta":
+          responseTranscript += message.delta ?? "";
+          break;
+        case "response.text.done":
+          responseTranscript = message.text || responseTranscript;
+          break;
+        case "response.done":
+          if (message.response?.status === "completed") {
+            finish({ text: responseTranscript || inputTranscript });
+          } else {
+            finish({
+              error: new TranscriptionError(
+                message.response?.status_details?.reason ||
+                  "Không thể nhận dạng giọng nói lúc này",
+                "ASR_UNAVAILABLE",
+              ),
+            });
+          }
           break;
         case "conversation.item.input_audio_transcription.failed":
+          // The model can still transcribe the audio itself even if its
+          // auxiliary auto-transcript fails or chooses the wrong language.
+          break;
         case "error":
           finish({
             error: new TranscriptionError(

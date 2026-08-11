@@ -442,6 +442,15 @@ describe("speech transcription", () => {
         },
       },
     });
+    const vietnameseSession = createAsrSessionUpdate("vi") as {
+      session: { instructions: string };
+    };
+    expect(vietnameseSession.session.instructions).toContain(
+      "audio language is fixed as Vietnamese",
+    );
+    expect(vietnameseSession.session.instructions).toContain(
+      "not an assistant or translator",
+    );
     expect(cleanTranscript("<|vi|>  Xin   chào <|endoftext|>")).toBe("Xin chào");
     expect(transcriptMatchesLockedLanguage("Xin chào", "vi")).toBe(true);
     expect(transcriptMatchesLockedLanguage("你好", "vi")).toBe(false);
