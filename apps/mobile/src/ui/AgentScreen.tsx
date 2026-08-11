@@ -498,19 +498,10 @@ export function AgentScreen({
     inputRange: [0, 0.2, 1],
     outputRange: [0.5, 0.34, 0],
   });
-  // The pulse travels up and down rather than out in every direction, matching
-  // the vertical motion the rest of this screen is built on.
+  // Every voice control uses the same horizontal pulse language.
   const ringScaleX = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.92, 1.18],
-  });
-  const ringScaleY = pulse.interpolate({
-    inputRange: [0, 1],
     outputRange: [0.94, 2.15],
-  });
-  const recordingBob = pulse.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, -5, 0],
   });
 
   return (
@@ -577,7 +568,6 @@ export function AgentScreen({
             transform: [
               { translateX: orbTranslateX },
               { translateY: orbTranslateY },
-              { translateY: recordingBob },
               { scaleX: orbScaleX },
               { scaleY: orbScaleY },
             ],
@@ -592,7 +582,7 @@ export function AgentScreen({
               {
                 borderColor: frameColor,
                 opacity: ringOpacity,
-                transform: [{ scaleX: ringScaleX }, { scaleY: ringScaleY }],
+                transform: [{ scaleX: ringScaleX }],
               },
             ]}
           />

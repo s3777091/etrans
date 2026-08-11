@@ -311,23 +311,23 @@ export function GestureOrb({
     inputRange: [0, 0.24, 1],
     outputRange: [0.48, 0.32, 0],
   });
-  const ringScale = pulse.interpolate({
+  const ringScaleX = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.94, 1.72],
+    outputRange: [0.94, 1.92],
   });
   const trailingRingOpacity = trailingPulse.interpolate({
     inputRange: [0, 0.2, 1],
     outputRange: [0.4, 0.26, 0],
   });
-  const trailingRingScale = trailingPulse.interpolate({
+  const trailingRingScaleX = trailingPulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.96, 1.58],
+    outputRange: [0.96, 1.7],
   });
   const recallOpacity = recall.interpolate({
     inputRange: [0, 0.28, 1],
     outputRange: [0, 0.46, 0],
   });
-  const recallScale = recall.interpolate({
+  const recallScaleX = recall.interpolate({
     inputRange: [0, 1],
     outputRange: [2.05, 0.94],
   });
@@ -374,7 +374,7 @@ export function GestureOrb({
             {
               borderColor: gestureColor,
               opacity: ringOpacity,
-              transform: [{ scale: ringScale }],
+              transform: [{ scaleX: ringScaleX }],
             },
           ]}
         />
@@ -386,7 +386,7 @@ export function GestureOrb({
               {
                 borderColor: gestureColor,
                 opacity: trailingRingOpacity,
-                transform: [{ scale: trailingRingScale }],
+                transform: [{ scaleX: trailingRingScaleX }],
               },
             ]}
           />
@@ -398,7 +398,7 @@ export function GestureOrb({
             {
               borderColor: gestureColor,
               opacity: recallOpacity,
-              transform: [{ scale: recallScale }],
+              transform: [{ scaleX: recallScaleX }],
             },
           ]}
         />
