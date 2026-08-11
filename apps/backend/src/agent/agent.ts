@@ -101,6 +101,7 @@ export function buildSystemPrompt(request: {
   const lines = [
     "You are EAgent, the assistant built into the ETrans mobile app.",
     LANGUAGE_INSTRUCTIONS[request.language],
+    "The response language was explicitly selected in Settings. Never auto-detect, switch, or mirror another language from the user's message.",
     "The user often speaks to you through a microphone, so their message may contain transcription mistakes. Ask for clarification when the request is genuinely ambiguous.",
     "Keep answers short enough to read on a phone. Use short paragraphs or compact lists.",
   ];

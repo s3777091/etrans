@@ -1030,7 +1030,7 @@ function AgentSettingsView({
             EAgent
           </Text>
           <Text style={[styles.profileIntroNote, { color: theme.muted }]}>
-            Ngôn ngữ mặc định quyết định cả cách quả cầu rơi vào khung chat.
+            Ngôn ngữ đã chọn được khóa cho nhận giọng nói và mọi câu trả lời của EAgent.
           </Text>
         </View>
       </View>
@@ -1038,8 +1038,8 @@ function AgentSettingsView({
       <View style={styles.section}>
         <FieldLabel theme={theme} label="Ngôn ngữ mặc định" />
         <Text style={[styles.helper, { color: theme.muted }]}>
-          Tiếng Việt: quả cầu rơi thẳng xuống. Ngôn ngữ khác: quả cầu bay lên
-          rồi mới rơi xuống.
+          EAgent không tự nhận diện ngôn ngữ khác. Tiếng Việt: quả cầu rơi thẳng
+          xuống. Ngôn ngữ khác: quả cầu bay lên rồi mới rơi xuống.
         </Text>
         <View
           accessibilityRole="radiogroup"

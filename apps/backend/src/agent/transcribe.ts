@@ -7,11 +7,14 @@ import { buildQwenRealtimeUrl } from "../qwen-urls.js";
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
 /** 100 ms of 16 kHz mono PCM16, matching the realtime sample rate. */
 const AUDIO_CHUNK_BYTES = 3_200;
+/** Upload recorded speech faster than realtime without overwhelming Qwen ASR. */
+const AUDIO_CHUNK_INTERVAL_MS = 40;
 export const MAX_AUDIO_DATA_URL_LENGTH = 8 * 1024 * 1024;
 
 interface RealtimeMessage {
   type?: string;
   text?: string;
+  stash?: string;
   transcript?: string;
   error?: { code?: string; message?: string };
 }
@@ -60,20 +63,17 @@ export function pcmFromWavDataUrl(value: string): Buffer | undefined {
 }
 
 export function createAsrSessionUpdate(
-  model: string,
-  language?: AgentLanguage,
+  language: AgentLanguage,
 ): Record<string, unknown> {
   return {
     event_id: "event_asr_session_update",
     type: "session.update",
     session: {
       modalities: ["text"],
-      input_audio_format: "pcm16",
-      sample_rate: 16_000,
+      input_audio_format: "pcm",
       turn_detection: null,
       input_audio_transcription: {
-        model,
-        ...(language ? { language } : {}),
+        language,
       },
     },
   };
@@ -90,7 +90,7 @@ export function cleanTranscript(value: string): string {
 export async function transcribeSpeech(
   config: BackendConfig,
   audioDataUrl: string,
-  language?: AgentLanguage,
+  language: AgentLanguage,
 ): Promise<string> {
   const pcm = pcmFromWavDataUrl(audioDataUrl);
   if (!pcm?.length) {
@@ -115,7 +115,7 @@ export async function transcribeSpeech(
 function runRealtimeTranscription(
   config: BackendConfig,
   pcm: Buffer,
-  language?: AgentLanguage,
+  language: AgentLanguage,
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const socket = new WebSocket(
@@ -124,11 +124,14 @@ function runRealtimeTranscription(
     );
     let settled = false;
     let partial = "";
+    let audioOffset = 0;
+    let audioTimer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (outcome: { text?: string; error?: Error }) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      clearTimeout(audioTimer);
       if (
         socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING
@@ -149,6 +152,26 @@ function runRealtimeTranscription(
         }),
       TRANSCRIBE_TIMEOUT_MS,
     );
+
+    const sendNextAudioChunk = () => {
+      if (settled || socket.readyState !== WebSocket.OPEN) return;
+      if (audioOffset >= pcm.length) {
+        socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        return;
+      }
+      const chunk = pcm.subarray(
+        audioOffset,
+        audioOffset + AUDIO_CHUNK_BYTES,
+      );
+      audioOffset += chunk.length;
+      socket.send(
+        JSON.stringify({
+          type: "input_audio_buffer.append",
+          audio: chunk.toString("base64"),
+        }),
+      );
+      audioTimer = setTimeout(sendNextAudioChunk, AUDIO_CHUNK_INTERVAL_MS);
+    };
 
     socket.on("unexpected-response", (_request, response) => {
       const authFailure =
@@ -185,26 +208,14 @@ function runRealtimeTranscription(
       switch (message.type) {
         case "session.created":
           socket.send(
-            JSON.stringify(
-              createAsrSessionUpdate(config.qwenAsrModel, language),
-            ),
+            JSON.stringify(createAsrSessionUpdate(language)),
           );
           break;
         case "session.updated":
-          for (let offset = 0; offset < pcm.length; offset += AUDIO_CHUNK_BYTES) {
-            socket.send(
-              JSON.stringify({
-                type: "input_audio_buffer.append",
-                audio: pcm
-                  .subarray(offset, offset + AUDIO_CHUNK_BYTES)
-                  .toString("base64"),
-              }),
-            );
-          }
-          socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          sendNextAudioChunk();
           break;
         case "conversation.item.input_audio_transcription.delta":
-          partial += message.text ?? "";
+          partial = `${message.text ?? ""}${message.stash ?? ""}`;
           break;
         case "conversation.item.input_audio_transcription.completed":
           finish({ text: message.transcript ?? partial });

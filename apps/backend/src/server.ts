@@ -397,11 +397,9 @@ export async function createServer(config: BackendConfig) {
       }
 
       const requestedLanguage = request.body?.language?.trim() ?? "";
-      const language: AgentLanguage | undefined = isAgentLanguage(
-        requestedLanguage,
-      )
+      const language: AgentLanguage = isAgentLanguage(requestedLanguage)
         ? requestedLanguage
-        : undefined;
+        : "vi";
 
       try {
         const text = await transcribeSpeech(config, audioDataUrl, language);

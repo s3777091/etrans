@@ -154,6 +154,7 @@ describe("agent request handling", () => {
       search: false,
     });
     expect(offline).toContain("no web access");
+    expect(offline).toContain("explicitly selected in Settings");
     expect(offline).toContain("Call me Dat");
   });
 
@@ -416,16 +417,14 @@ describe("speech transcription", () => {
 
   it("configures a transcription-only realtime session", () => {
     expect(
-      createAsrSessionUpdate("qwen-audio-3.0-realtime-plus", "vi"),
+      createAsrSessionUpdate("vi"),
     ).toMatchObject({
       type: "session.update",
       session: {
         modalities: ["text"],
-        input_audio_format: "pcm16",
-        sample_rate: 16_000,
+        input_audio_format: "pcm",
         turn_detection: null,
         input_audio_transcription: {
-          model: "qwen-audio-3.0-realtime-plus",
           language: "vi",
         },
       },
