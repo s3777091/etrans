@@ -4,6 +4,7 @@ import type { AgentChatMessage } from "../agent/agent-client";
 import {
   MAX_AGENT_HISTORY_MESSAGES,
   parseAgentHistory,
+  removeAgentHistoryTurn,
   serializeAgentHistory,
 } from "./agent-history";
 
@@ -42,5 +43,16 @@ describe("agent history", () => {
     const parsed = parseAgentHistory(JSON.stringify([{ id: "bad" }, ...values]));
     expect(parsed).toHaveLength(MAX_AGENT_HISTORY_MESSAGES);
     expect(parsed[0]?.id).toBe("m4");
+  });
+
+  it("removes a complete question and answer turn", () => {
+    const messages: AgentChatMessage[] = [
+      { id: "u1", role: "user", text: "Một", createdAt: 1 },
+      { id: "a1", role: "assistant", text: "Trả lời một", createdAt: 2 },
+      { id: "u2", role: "user", text: "Hai", createdAt: 3 },
+      { id: "a2", role: "assistant", text: "Trả lời hai", createdAt: 4 },
+    ];
+    expect(removeAgentHistoryTurn(messages, "a1")).toEqual(messages.slice(2));
+    expect(removeAgentHistoryTurn(messages, "u2")).toEqual(messages.slice(0, 2));
   });
 });

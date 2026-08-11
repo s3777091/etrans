@@ -34,6 +34,13 @@ export function addTranslationHistoryEntry(
   );
 }
 
+export function removeTranslationHistoryEntry(
+  current: TranslationHistoryEntry[],
+  entryId: string,
+): TranslationHistoryEntry[] {
+  return current.filter((entry) => entry.id !== entryId);
+}
+
 export function parseTranslationHistory(
   value: string | null | undefined,
 ): TranslationHistoryEntry[] {

@@ -15,14 +15,11 @@ import {
   Animated,
   Easing,
   Image,
-  KeyboardAvoidingView,
   Linking,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -41,6 +38,7 @@ import {
 import { useVoiceRecorder } from "../audio/use-voice-recorder";
 import {
   agentEntranceForLanguage,
+  type AgentLanguage,
   type AgentSettings,
 } from "../settings/agent-settings";
 import { LANGUAGE_META } from "../settings/translation-settings";
@@ -49,12 +47,22 @@ import type { AppTheme } from "./theme";
 
 const ORB_SIZE = 78;
 const ORB_MARGIN = 18;
-const FRAME_INSET = 18;
+const FRAME_INSET = 10;
+const FRAME_PADDING = 12;
 const HOLD_THRESHOLD_MS = 200;
 const DOUBLE_TAP_WINDOW_MS = 320;
 const RISE_DURATION_MS = 360;
 const FALL_DURATION_MS = 520;
 const OPEN_DURATION_MS = 520;
+const CLOSE_DURATION_MS = 300;
+const LIFT_DURATION_MS = 440;
+
+/** The first thing the agent says, so the screen is never a blank frame. */
+const GREETINGS: Record<AgentLanguage, string> = {
+  vi: "Xin chào, tôi giúp được gì cho bạn?",
+  zh: "你好，有什么可以帮你的吗？",
+  en: "Hi, how can I help you?",
+};
 
 type AgentPhase = "idle" | "recording" | "transcribing" | "streaming";
 
@@ -69,6 +77,9 @@ interface AgentScreenProps {
   messages: AgentChatMessage[];
   onMessagesChanged: Dispatch<SetStateAction<AgentChatMessage[]>>;
   onRequestPhoto: () => Promise<CapturedPhoto | undefined>;
+  /** Set while the translate tab is waiting for the orb to travel back up. */
+  leaving: boolean;
+  onExited: () => void;
 }
 
 export function AgentScreen({
@@ -81,12 +92,14 @@ export function AgentScreen({
   messages,
   onMessagesChanged: setMessages,
   onRequestPhoto,
+  leaving,
+  onExited,
 }: AgentScreenProps) {
   const { width, height } = useWindowDimensions();
   const [phase, setPhase] = useState<AgentPhase>("idle");
-  const [draft, setDraft] = useState("");
   const [hint, setHint] = useState<string>();
   const [entranceDone, setEntranceDone] = useState(reduceMotion);
+  const [zoneHeight, setZoneHeight] = useState(height * 0.72);
 
   const messagesRef = useRef<AgentChatMessage[]>([]);
   const streamingIdRef = useRef<string | undefined>(undefined);
@@ -111,10 +124,13 @@ export function AgentScreen({
   const landing = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
 
-  // The dock sits inside the frame padding, so the orb has that much further
-  // to travel from the centre of the translate screen.
+  // The orb starts exactly where the translate screen left it — the middle of
+  // the body — and ends docked in the bottom corner of the chat frame.
   const dockCenterX = width - FRAME_INSET - ORB_MARGIN - ORB_SIZE / 2;
   const startTranslateX = width / 2 - dockCenterX;
+  const dockCenterY = zoneHeight - ORB_MARGIN - ORB_SIZE / 2;
+  const startTranslateY = zoneHeight / 2 - dockCenterY;
+  const liftTranslateY = -dockCenterY + ORB_SIZE / 2 + 12;
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -140,6 +156,8 @@ export function AgentScreen({
   // Captured once so editing the language mid-chat cannot replay the entrance;
   // leaving and re-entering the tab remounts the screen and plays it again.
   const entranceLanguageRef = useRef(settings.language);
+  const dropOnly =
+    agentEntranceForLanguage(entranceLanguageRef.current) === "drop";
 
   useEffect(() => {
     if (reduceMotion) {
@@ -149,9 +167,7 @@ export function AgentScreen({
       return;
     }
 
-    const dropOnly =
-      agentEntranceForLanguage(entranceLanguageRef.current) === "drop";
-    entrance.setValue(dropOnly ? 0.42 : 0);
+    entrance.setValue(0);
     open.setValue(0);
     landing.setValue(0);
 
@@ -197,7 +213,51 @@ export function AgentScreen({
     });
 
     return () => path.stop();
-  }, [entrance, landing, open, reduceMotion]);
+  }, [dropOnly, entrance, landing, open, reduceMotion]);
+
+  // Going back to the translate tab runs the same path backwards: the frame
+  // closes onto the orb, then the orb rides back up to where it came from.
+  useEffect(() => {
+    if (!leaving) return;
+    if (reduceMotion) {
+      onExited();
+      return;
+    }
+
+    setEntranceDone(false);
+    const exit = Animated.sequence([
+      Animated.timing(open, {
+        toValue: 0,
+        duration: CLOSE_DURATION_MS,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(entrance, {
+        toValue: 0,
+        duration: LIFT_DURATION_MS,
+        easing: dropOnly ? Easing.out(Easing.quad) : Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]);
+    exit.start(({ finished }) => {
+      if (finished) onExited();
+    });
+    return () => exit.stop();
+  }, [dropOnly, entrance, leaving, onExited, open, reduceMotion]);
+
+  // Also re-greets after the conversation is cleared from settings.
+  useEffect(() => {
+    if (!entranceDone || leaving || messages.length > 0) return;
+    setMessages([
+      {
+        id: `agent-greeting-${Date.now()}`,
+        role: "assistant",
+        text: GREETINGS[settings.language],
+        status: "done",
+        createdAt: Date.now(),
+      },
+    ]);
+  }, [entranceDone, leaving, messages.length, setMessages, settings.language]);
 
   useEffect(() => {
     pulse.stopAnimation();
@@ -250,19 +310,6 @@ export function AgentScreen({
     }
     setPhase("idle");
   }, [client, setMessages]);
-
-  const sendText = useCallback(() => {
-    const text = draft.trim();
-    if (!text || phase !== "idle") return;
-    turnTokenRef.current += 1;
-    setDraft("");
-    sendTurn({
-      id: `user-${Date.now()}`,
-      role: "user",
-      text,
-      createdAt: Date.now(),
-    });
-  }, [draft, phase, sendTurn]);
 
   const finishRecording = useCallback(async () => {
     recordingRef.current = false;
@@ -338,12 +385,11 @@ export function AgentScreen({
       sendTurn({
         id: `user-${Date.now()}`,
         role: "user",
-        text: draft.trim(),
+        text: "",
         imageUri: photo.uri,
         imageDataUrl,
         createdAt: Date.now(),
       });
-      setDraft("");
     } catch (error) {
       setHint(
         error instanceof Error ? error.message : "Không thể gửi ảnh lúc này",
@@ -351,7 +397,7 @@ export function AgentScreen({
     } finally {
       photoBusyRef.current = false;
     }
-  }, [draft, onRequestPhoto, sendTurn, stopStreaming]);
+  }, [onRequestPhoto, sendTurn, stopStreaming]);
 
   const handlePressIn = useCallback(() => {
     clearTimeout(holdTimerRef.current);
@@ -377,8 +423,14 @@ export function AgentScreen({
       return;
     }
     lastTapAtRef.current = now;
+    // Without a composer the orb is the only stop button there is.
+    if (streamingIdRef.current) {
+      stopStreaming();
+      setHint("Đã dừng câu trả lời");
+      return;
+    }
     setHint("Giữ để nói, nhấn đúp để gửi ảnh");
-  }, [finishRecording, sendPhoto]);
+  }, [finishRecording, sendPhoto, stopStreaming]);
 
   useEffect(() => () => clearTimeout(holdTimerRef.current), []);
 
@@ -410,10 +462,17 @@ export function AgentScreen({
     inputRange: [0, 1],
     outputRange: [startTranslateX, 0],
   });
-  const orbTranslateY = entrance.interpolate({
-    inputRange: [0, 0.42, 1],
-    outputRange: [-height * 0.18, -height * 0.66, 0],
-  });
+  // Vietnamese falls straight from the translate orb; the other languages lift
+  // out of the layout first, so they need the extra control point.
+  const orbTranslateY = dropOnly
+    ? entrance.interpolate({
+        inputRange: [0, 1],
+        outputRange: [startTranslateY, 0],
+      })
+    : entrance.interpolate({
+        inputRange: [0, 0.42, 1],
+        outputRange: [startTranslateY, liftTranslateY, 0],
+      });
   const orbScaleX = landing.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 1.16],
@@ -426,15 +485,25 @@ export function AgentScreen({
     inputRange: [0, 0.2, 1],
     outputRange: [0.5, 0.34, 0],
   });
-  const ringScale = pulse.interpolate({
+  // The pulse travels up and down rather than out in every direction, matching
+  // the vertical motion the rest of this screen is built on.
+  const ringScaleX = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.96, 1.8],
+    outputRange: [0.92, 1.18],
+  });
+  const ringScaleY = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.94, 2.15],
+  });
+  const recordingBob = pulse.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0, -5, 0],
   });
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <View
       style={styles.zone}
+      onLayout={(event) => setZoneHeight(event.nativeEvent.layout.height)}
     >
       <Animated.View
         style={[
@@ -467,82 +536,19 @@ export function AgentScreen({
               scrollRef.current?.scrollToEnd({ animated: !reduceMotion })
             }
           >
-            {messages.length === 0 ? (
-              <EmptyState theme={theme} settings={settings} />
-            ) : (
-              messages.map((message) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  theme={theme}
-                  frameColor={frameColor}
-                />
-              ))
-            )}
+            {messages.map((message) => (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                theme={theme}
+                frameColor={frameColor}
+              />
+            ))}
           </ScrollView>
 
           {hint ? (
             <Text style={[styles.hint, { color: theme.muted }]}>{hint}</Text>
           ) : null}
-
-          <View style={styles.composer}>
-            <TextInput
-              accessibilityLabel="Nhắn cho trợ lý"
-              multiline
-              maxLength={4_000}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Nhắn cho trợ lý…"
-              placeholderTextColor={theme.faint}
-              selectionColor={theme.accent}
-              style={[
-                styles.input,
-                {
-                  backgroundColor: theme.background,
-                  borderColor: theme.border,
-                  color: theme.text,
-                },
-              ]}
-            />
-            <Pressable
-              accessibilityLabel={
-                phase === "streaming" ? "Dừng trả lời" : "Gửi tin nhắn"
-              }
-              accessibilityRole="button"
-              onPress={() => {
-                if (phase === "streaming") {
-                  stopStreaming();
-                  return;
-                }
-                sendText();
-              }}
-              disabled={phase !== "streaming" && !draft.trim()}
-              style={({ pressed }) => [
-                styles.sendButton,
-                {
-                  backgroundColor:
-                    phase === "streaming"
-                      ? theme.dangerSurface
-                      : draft.trim()
-                        ? frameColor
-                        : theme.surface,
-                  opacity: pressed ? 0.7 : 1,
-                },
-              ]}
-            >
-              <MaterialIcons
-                name={phase === "streaming" ? "stop" : "arrow-upward"}
-                size={22}
-                color={
-                  phase === "streaming"
-                    ? theme.danger
-                    : draft.trim()
-                      ? readableTextColor(frameColor)
-                      : theme.faint
-                }
-              />
-            </Pressable>
-          </View>
 
           <Text style={[styles.status, { color: theme.faint }]}>
             {statusText}
@@ -558,6 +564,7 @@ export function AgentScreen({
             transform: [
               { translateX: orbTranslateX },
               { translateY: orbTranslateY },
+              { translateY: recordingBob },
               { scaleX: orbScaleX },
               { scaleY: orbScaleY },
             ],
@@ -572,7 +579,7 @@ export function AgentScreen({
               {
                 borderColor: frameColor,
                 opacity: ringOpacity,
-                transform: [{ scale: ringScale }],
+                transform: [{ scaleX: ringScaleX }, { scaleY: ringScaleY }],
               },
             ]}
           />
@@ -616,83 +623,6 @@ export function AgentScreen({
           )}
         </Pressable>
       </Animated.View>
-    </KeyboardAvoidingView>
-  );
-}
-
-function EmptyState({
-  theme,
-  settings,
-}: {
-  theme: AppTheme;
-  settings: AgentSettings;
-}) {
-  const language = LANGUAGE_META[settings.language];
-  return (
-    <View style={styles.empty}>
-      <View
-        style={[styles.emptyIcon, { backgroundColor: `${theme.accent}16` }]}
-      >
-        <MaterialIcons name="support-agent" size={30} color={theme.accent} />
-      </View>
-      <Text style={[styles.emptyTitle, { color: theme.text }]}>
-        Trò chuyện bằng {language.label}
-      </Text>
-      <Text style={[styles.emptyNote, { color: theme.muted }]}>
-        Giữ quả cầu để nói, thả tay là gửi. Nhấn đúp để chụp và gửi ảnh.
-      </Text>
-      <View style={styles.emptyBadges}>
-        <Badge
-          theme={theme}
-          icon="travel-explore"
-          label={settings.search ? "Tìm web bằng Exa" : "Không tìm web"}
-          active={settings.search}
-        />
-        <Badge
-          theme={theme}
-          icon="psychology"
-          label={settings.reasoning ? "Suy luận sâu" : "Trả lời nhanh"}
-          active={settings.reasoning}
-        />
-      </View>
-    </View>
-  );
-}
-
-function Badge({
-  theme,
-  icon,
-  label,
-  active,
-}: {
-  theme: AppTheme;
-  icon: keyof typeof MaterialIcons.glyphMap;
-  label: string;
-  active: boolean;
-}) {
-  return (
-    <View
-      style={[
-        styles.badge,
-        {
-          backgroundColor: active ? `${theme.accent}14` : theme.surface,
-          borderColor: active ? `${theme.accent}55` : theme.border,
-        },
-      ]}
-    >
-      <MaterialIcons
-        name={icon}
-        size={15}
-        color={active ? theme.accent : theme.muted}
-      />
-      <Text
-        style={[
-          styles.badgeText,
-          { color: active ? theme.accent : theme.muted },
-        ]}
-      >
-        {label}
-      </Text>
     </View>
   );
 }
@@ -852,7 +782,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1.5,
     borderRadius: 24,
-    paddingHorizontal: 16,
+    paddingHorizontal: FRAME_PADDING,
     paddingTop: 12,
     paddingBottom: 12,
   },
@@ -865,33 +795,13 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 11, fontWeight: "800", letterSpacing: 1.35 },
   note: { flexShrink: 1, fontSize: 10, fontWeight: "700", letterSpacing: 0.9 },
-  messages: { flexGrow: 1, paddingTop: 14, paddingBottom: 6, gap: 10 },
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
-  emptyIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    alignItems: "center",
-    justifyContent: "center",
+  // The last bubbles must clear the docked orb.
+  messages: {
+    flexGrow: 1,
+    paddingTop: 14,
+    paddingBottom: ORB_SIZE + 6,
+    gap: 10,
   },
-  emptyTitle: { marginTop: 4, fontSize: 17, fontWeight: "700" },
-  emptyNote: {
-    maxWidth: 280,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center",
-  },
-  emptyBadges: { marginTop: 10, flexDirection: "row", gap: 8 },
-  badge: {
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 13,
-    borderWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  badgeText: { fontSize: 12, fontWeight: "700" },
   bubbleRow: { flexDirection: "row" },
   bubbleRowUser: { justifyContent: "flex-end" },
   bubble: {
@@ -920,31 +830,6 @@ const styles = StyleSheet.create({
   sourceIndex: { fontSize: 12, fontWeight: "800" },
   sourceTitle: { flex: 1, fontSize: 12 },
   hint: { paddingHorizontal: 4, paddingBottom: 6, fontSize: 12, lineHeight: 17 },
-  composer: {
-    paddingRight: ORB_SIZE + 12,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-  },
-  input: {
-    flex: 1,
-    minHeight: 46,
-    maxHeight: 120,
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 12,
-    borderRadius: 16,
-    borderWidth: 1.25,
-    fontSize: 15,
-    lineHeight: 20,
-  },
-  sendButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   status: {
     paddingTop: 8,
     paddingRight: ORB_SIZE + 12,

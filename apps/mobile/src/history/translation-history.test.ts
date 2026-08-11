@@ -4,6 +4,7 @@ import {
   MAX_TRANSLATION_HISTORY,
   addTranslationHistoryEntry,
   parseTranslationHistory,
+  removeTranslationHistoryEntry,
   translationHistoryDisplayTexts,
   type TranslationHistoryEntry,
 } from "./translation-history";
@@ -39,6 +40,13 @@ describe("translation history", () => {
     }
     expect(current).toHaveLength(MAX_TRANSLATION_HISTORY);
     expect(current[0]?.id).toBe(`voice-${MAX_TRANSLATION_HISTORY + 4}`);
+  });
+
+  it("removes only the selected translation", () => {
+    const other = { ...entry, id: "voice-2", createdAt: 2 };
+    expect(removeTranslationHistoryEntry([other, entry], entry.id)).toEqual([
+      other,
+    ]);
   });
 
   it("restores both transcript panels in either direction", () => {

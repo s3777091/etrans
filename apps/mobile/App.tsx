@@ -23,19 +23,18 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { useInterpreterAudio } from "./src/audio/use-interpreter-audio";
-import {
-  LiveInterpreterEngine,
-  type InterpreterMetrics,
-} from "./src/interpreter/engine";
+import { LiveInterpreterEngine } from "./src/interpreter/engine";
 import { appendTranscript } from "./src/interpreter/transcript";
 import {
   addTranslationHistoryEntry,
   parseTranslationHistory,
+  removeTranslationHistoryEntry,
   translationHistoryDisplayTexts,
   type TranslationHistoryEntry,
 } from "./src/history/translation-history";
 import {
   parseAgentHistory,
+  removeAgentHistoryTurn,
   serializeAgentHistory,
 } from "./src/history/agent-history";
 import {
@@ -69,7 +68,6 @@ import {
   type CapturedPhoto,
 } from "./src/ui/CameraCaptureModal";
 import { AgentScreen } from "./src/ui/AgentScreen";
-import { DeveloperModal } from "./src/ui/DeveloperModal";
 import { GestureOrb } from "./src/ui/GestureOrb";
 import { AppSplash, ETRANS_ICONS } from "./src/ui/AppSplash";
 import { SettingsModal } from "./src/ui/SettingsModal";
@@ -86,15 +84,6 @@ type AppPhase =
   | "translating"
   | "speaking"
   | "error";
-
-const DEFAULT_METRICS: InterpreterMetrics = {
-  provider: "Alibaba Qwen",
-  currentModel: "qwen3.5-livetranslate-flash-realtime",
-  mode: "REALTIME",
-  direction: "zh-to-vi",
-  pcmQueueMs: 0,
-  droppedBuffers: 0,
-};
 
 const THEME_MODE_STORAGE_KEY = "interpreter.theme-mode";
 const TRANSLATION_SETTINGS_STORAGE_KEY = "interpreter.translation-settings";
@@ -127,6 +116,8 @@ export default function App() {
   const orbTravel = useRef(new Animated.Value(0)).current;
 
   const [mode, setMode] = useState<AppMode>("translate");
+  // The agent screen stays mounted while its orb travels back up.
+  const [agentLeaving, setAgentLeaving] = useState(false);
   const [phase, setPhase] = useState<AppPhase>("connecting");
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [counterpartText, setCounterpartText] = useState("");
@@ -137,8 +128,6 @@ export default function App() {
     undefined,
   );
   const turnStartedAtRef = useRef(0);
-  const [metrics, setMetrics] = useState(DEFAULT_METRICS);
-  const [developerVisible, setDeveloperVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [fatalMessage, setFatalMessage] = useState<string>();
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -331,10 +320,30 @@ export default function App() {
     );
   }, []);
 
+  const deleteHistoryEntry = useCallback((entryId: string) => {
+    setTranslationHistory((current) => {
+      const next = removeTranslationHistoryEntry(current, entryId);
+      const persistence = next.length
+        ? AsyncStorage.setItem(
+            TRANSLATION_HISTORY_STORAGE_KEY,
+            JSON.stringify(next),
+          )
+        : AsyncStorage.removeItem(TRANSLATION_HISTORY_STORAGE_KEY);
+      void persistence.catch(() => undefined);
+      return next;
+    });
+  }, []);
+
   const clearAgentHistory = useCallback(() => {
     setAgentMessages([]);
     void AsyncStorage.removeItem(AGENT_HISTORY_STORAGE_KEY).catch(
       () => undefined,
+    );
+  }, []);
+
+  const deleteAgentHistoryTurn = useCallback((messageId: string) => {
+    setAgentMessages((current) =>
+      removeAgentHistoryTurn(current, messageId),
     );
   }, []);
 
@@ -354,8 +363,8 @@ export default function App() {
       vietnameseTextRef.current = display.vietnameseText;
       setImageTranslation(undefined);
       setImageError(undefined);
-      setDeveloperVisible(false);
       setSettingsVisible(false);
+      setAgentLeaving(false);
       setMode("translate");
     },
     [persistTranslationSettings, translationSettings],
@@ -445,7 +454,6 @@ export default function App() {
 
   useEffect(() => {
     const removeMetrics = engine.onMetrics((nextMetrics) => {
-      setMetrics({ ...nextMetrics });
       if (nextMetrics.firstTranslatedAudioMs !== undefined) {
         setPhase((current) =>
           current === "translating" ? "speaking" : current,
@@ -546,10 +554,15 @@ export default function App() {
 
   const restoreAgentHistory = useCallback(() => {
     if (phase === "listening") release();
-    setDeveloperVisible(false);
     setSettingsVisible(false);
+    setAgentLeaving(false);
     setMode("agent");
   }, [phase, release]);
+
+  const handleAgentExited = useCallback(() => {
+    setAgentLeaving(false);
+    setMode("translate");
+  }, []);
 
   const resolveAgentPhoto = useCallback((photo: CapturedPhoto | undefined) => {
     const resolve = agentPhotoResolverRef.current;
@@ -755,8 +768,11 @@ export default function App() {
               accessibilityState={{ selected: mode === "translate" }}
               hitSlop={4}
               onPress={() => {
-                setDeveloperVisible(false);
                 setSettingsVisible(false);
+                if (mode === "agent") {
+                  setAgentLeaving(true);
+                  return;
+                }
                 setMode("translate");
               }}
               style={({ pressed }) => [
@@ -785,11 +801,11 @@ export default function App() {
               hitSlop={4}
               onPress={() => {
                 setSettingsVisible(false);
-                setDeveloperVisible(false);
                 // Switching away mid-gesture never terminates the pan
                 // responder, so close the interpreter turn by hand or the
                 // microphone stays open behind the agent screen.
                 if (phase === "listening") release();
+                setAgentLeaving(false);
                 setMode("agent");
               }}
               style={({ pressed }) => [
@@ -816,10 +832,7 @@ export default function App() {
               accessibilityRole="tab"
               accessibilityState={{ selected: false }}
               hitSlop={4}
-              onPress={() => {
-                setDeveloperVisible(false);
-                setSettingsVisible(true);
-              }}
+              onPress={() => setSettingsVisible(true)}
               style={({ pressed }) => [
                 styles.headerTabButton,
                 {
@@ -857,6 +870,8 @@ export default function App() {
             messages={agentMessages}
             onMessagesChanged={setAgentMessages}
             onRequestPhoto={requestAgentPhoto}
+            leaving={agentLeaving}
+            onExited={handleAgentExited}
           />
         ) : (
           <>
@@ -927,12 +942,10 @@ export default function App() {
           onSaveAgent={handleSaveAgent}
           onClearHistory={clearHistory}
           onClearAgentHistory={clearAgentHistory}
+          onDeleteHistoryEntry={deleteHistoryEntry}
+          onDeleteAgentHistoryTurn={deleteAgentHistoryTurn}
           onRestoreHistory={restoreTranslationHistory}
           onRestoreAgentHistory={restoreAgentHistory}
-          onOpenDiagnostics={() => {
-            setSettingsVisible(false);
-            setDeveloperVisible(true);
-          }}
           onClose={() => setSettingsVisible(false)}
         />
 
@@ -944,12 +957,6 @@ export default function App() {
           onError={handleCameraError}
         />
 
-        <DeveloperModal
-          visible={developerVisible}
-          metrics={metrics}
-          theme={theme}
-          onClose={() => setDeveloperVisible(false)}
-        />
         </SafeAreaView>
         <AppSplash
           visible={splashVisible}

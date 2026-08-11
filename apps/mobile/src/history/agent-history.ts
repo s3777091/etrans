@@ -37,6 +37,30 @@ export function serializeAgentHistory(messages: AgentChatMessage[]): string {
   return JSON.stringify(compact);
 }
 
+/** Removes the selected question and every answer before the next question. */
+export function removeAgentHistoryTurn(
+  messages: AgentChatMessage[],
+  messageId: string,
+): AgentChatMessage[] {
+  const selectedIndex = messages.findIndex((message) => message.id === messageId);
+  if (selectedIndex < 0) return messages;
+
+  let turnStart = selectedIndex;
+  while (turnStart > 0 && messages[turnStart]?.role !== "user") {
+    turnStart -= 1;
+  }
+
+  if (messages[turnStart]?.role !== "user") {
+    return messages.filter((message) => message.id !== messageId);
+  }
+
+  let turnEnd = turnStart + 1;
+  while (turnEnd < messages.length && messages[turnEnd]?.role !== "user") {
+    turnEnd += 1;
+  }
+  return [...messages.slice(0, turnStart), ...messages.slice(turnEnd)];
+}
+
 function sanitizeMessage(value: unknown): AgentChatMessage | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as Partial<AgentChatMessage>;

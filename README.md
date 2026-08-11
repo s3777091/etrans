@@ -59,7 +59,7 @@ Yêu cầu Node.js 20.19.4 trở lên và Android Studio hoặc Xcode.
 - Thả tay để kết thúc lượt nói. Quả cầu bật về giữa, khung giãn ra (stretch) rồi về nguyên dạng, một vòng sáng thu vào quả cầu.
 - Nhấn đúp quả cầu để chọn ảnh màn hình gần nhất, đọc chữ và dịch nhanh. Kết quả hiện ở khung TIẾNG VIỆT kèm nhãn phụ "DỊCH ẢNH".
 - Viền quả cầu là đèn báo kết nối máy chủ: viền xanh là đã kết nối, viền đỏ là chưa kết nối, viền xanh dương là micro đang mở.
-- Nhấn biểu tượng bánh răng để mở cài đặt hiệu ứng, dịch ảnh và chẩn đoán.
+- Nhấn biểu tượng bánh răng để mở cài đặt giao diện, dịch thuật, trợ lý và lịch sử.
 
 Android và iOS không cho ứng dụng tự ý chụp nội dung của ứng dụng khác. Luồng nhấn đúp vì vậy mở bộ chọn ảnh hệ thống để người dùng chọn ảnh màn hình cần dịch.
 
@@ -75,13 +75,18 @@ Giữ quả cầu -> PCM 16 kHz -> POST /v1/agent/transcribe
   -> Exa /search khi cần thông tin mới -> câu trả lời chạy chữ trên máy
 ```
 
-- Vào chế độ trợ lý, quả cầu rơi từ trên xuống góc khung chat rồi khung mở đầy
-  màn hình. Ngôn ngữ mặc định là tiếng Việt thì quả cầu rơi thẳng; đặt tiếng
-  Trung hoặc tiếng Anh thì quả cầu bay lên trước rồi mới rơi xuống.
+- Vào chế độ trợ lý, quả cầu rời đúng chỗ nó đứng trên màn hình dịch rồi rơi
+  xuống góc khung chat, khung bọc lấy nó và mở đầy màn hình. Ngôn ngữ mặc định
+  là tiếng Việt thì quả cầu rơi thẳng; đặt tiếng Trung hoặc tiếng Anh thì quả
+  cầu bay lên trước rồi mới rơi xuống. Bấm lại tab dịch thì cảnh chạy ngược:
+  khung khép vào quả cầu, quả cầu đẩy lên chỗ cũ.
+- Vừa vào là trợ lý chào trước, không để khung trống.
+- Đây là màn hình dùng giọng nói nên không có ô nhập chữ.
 - **Nhấn giữ** quả cầu để bật micro, thả tay là gửi. Câu nói được chép lại theo
-  ngôn ngữ đã đặt trong cài đặt rồi gửi cho trợ lý.
-- **Nhấn đúp** quả cầu để mở camera và gửi ảnh cho trợ lý. Vẫn có ô nhập chữ
-  cho lúc không tiện nói.
+  ngôn ngữ đã đặt trong cài đặt rồi gửi cho trợ lý. Lúc thu, vòng sáng đập lên
+  xuống theo trục dọc.
+- **Nhấn đúp** quả cầu để mở camera và gửi ảnh cho trợ lý.
+- **Chạm một lần** khi trợ lý đang trả lời để dừng câu trả lời.
 - Câu trả lời chạy chữ theo thời gian thực. Khi bật suy luận, phần suy luận nằm
   sau nút "Xem suy luận". Khi trợ lý tìm web, truy vấn hiện ngay trong bong
   bóng chat và nguồn hiện ở cuối câu trả lời, chạm để mở.

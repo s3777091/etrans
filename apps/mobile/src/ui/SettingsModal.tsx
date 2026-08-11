@@ -74,9 +74,10 @@ interface SettingsModalProps {
   onSaveAgent: (settings: AgentSettings) => void;
   onClearHistory: () => void;
   onClearAgentHistory: () => void;
+  onDeleteHistoryEntry: (entryId: string) => void;
+  onDeleteAgentHistoryTurn: (messageId: string) => void;
   onRestoreHistory: (entry: TranslationHistoryEntry) => void;
   onRestoreAgentHistory: () => void;
-  onOpenDiagnostics: () => void;
   onClose: () => void;
 }
 
@@ -255,9 +256,10 @@ export function SettingsModal({
   onSaveAgent,
   onClearHistory,
   onClearAgentHistory,
+  onDeleteHistoryEntry,
+  onDeleteAgentHistoryTurn,
   onRestoreHistory,
   onRestoreAgentHistory,
-  onOpenDiagnostics,
   onClose,
 }: SettingsModalProps) {
   const [route, setRoute] = useState<SettingsRoute>("root");
@@ -509,7 +511,6 @@ export function SettingsModal({
               onOpenAgent={openAgent}
               onOpenTranslationHistory={() => setRoute("translationHistory")}
               onOpenAgentHistory={() => setRoute("agentHistory")}
-              onOpenDiagnostics={onOpenDiagnostics}
               historyCount={history.length}
               agentHistoryCount={agentHistory.filter((message) => message.role === "user").length}
             />
@@ -561,6 +562,7 @@ export function SettingsModal({
               theme={theme}
               history={history}
               onClear={onClearHistory}
+              onDelete={onDeleteHistoryEntry}
               onRestore={onRestoreHistory}
             />
           ) : (
@@ -568,6 +570,7 @@ export function SettingsModal({
               theme={theme}
               history={agentHistory}
               onClear={onClearAgentHistory}
+              onDeleteTurn={onDeleteAgentHistoryTurn}
               onRestore={onRestoreAgentHistory}
             />
           )}
@@ -657,7 +660,6 @@ function RootSettings({
   onOpenAgent,
   onOpenTranslationHistory,
   onOpenAgentHistory,
-  onOpenDiagnostics,
   historyCount,
   agentHistoryCount,
 }: {
@@ -672,7 +674,6 @@ function RootSettings({
   onOpenAgent: () => void;
   onOpenTranslationHistory: () => void;
   onOpenAgentHistory: () => void;
-  onOpenDiagnostics: () => void;
   historyCount: number;
   agentHistoryCount: number;
 }) {
@@ -881,23 +882,6 @@ function RootSettings({
         </View>
       </View>
 
-      <View style={styles.section}>
-        <SectionTitle icon="monitor-heart" title="Chẩn đoán" theme={theme} />
-        <Text style={[styles.helper, { color: theme.muted }]}>
-          Xem độ trễ kết nối và model đang chạy.
-        </Text>
-        <View style={styles.options}>
-          <NavigationRow
-            theme={theme}
-            title="Thông số kỹ thuật"
-            note="Kết nối, độ trễ, bộ đệm âm thanh"
-            onPress={onOpenDiagnostics}
-            leading={
-              <MaterialIcons name="speed" size={25} color={theme.accent} />
-            }
-          />
-        </View>
-      </View>
     </ScrollView>
   );
 }
@@ -1822,11 +1806,13 @@ function HistorySettings({
   theme,
   history,
   onClear,
+  onDelete,
   onRestore,
 }: {
   theme: AppTheme;
   history: TranslationHistoryEntry[];
   onClear: () => void;
+  onDelete: (entryId: string) => void;
   onRestore: (entry: TranslationHistoryEntry) => void;
 }) {
   const confirmClear = () => {
@@ -1836,6 +1822,20 @@ function HistorySettings({
       [
         { text: "Hủy", style: "cancel" },
         { text: "Xóa", style: "destructive", onPress: onClear },
+      ],
+    );
+  };
+  const confirmDelete = (entry: TranslationHistoryEntry) => {
+    Alert.alert(
+      "Xóa bản dịch này?",
+      "Bản dịch đã chọn sẽ bị xóa khỏi lịch sử trên thiết bị.",
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: "Xóa",
+          style: "destructive",
+          onPress: () => onDelete(entry.id),
+        },
       ],
     );
   };
@@ -1874,18 +1874,14 @@ function HistorySettings({
             ]}
           >
             {history.map((entry, index) => (
-              <Pressable
+              <View
                 key={entry.id}
-                accessibilityLabel={`Nạp lại bản dịch ${entry.sourceText}`}
-                accessibilityRole="button"
-                onPress={() => onRestore(entry)}
-                style={({ pressed }) => [
+                style={[
                   styles.historyItem,
                   index > 0 && {
                     borderTopWidth: StyleSheet.hairlineWidth,
                     borderTopColor: theme.border,
                   },
-                  { opacity: pressed ? 0.62 : 1 },
                 ]}
               >
                 <View style={styles.historyMetaRow}>
@@ -1927,15 +1923,51 @@ function HistorySettings({
                 >
                   {entry.translatedText}
                 </Text>
-                <View style={styles.historyRestoreRow}>
-                  <MaterialIcons name="replay" size={16} color={theme.accent} />
-                  <Text
-                    style={[styles.historyRestoreText, { color: theme.accent }]}
+                <View style={styles.historyItemActions}>
+                  <Pressable
+                    accessibilityLabel={`Nạp lại bản dịch ${entry.sourceText}`}
+                    accessibilityRole="button"
+                    onPress={() => onRestore(entry)}
+                    style={({ pressed }) => [
+                      styles.historyItemAction,
+                      {
+                        backgroundColor: `${theme.accent}14`,
+                        opacity: pressed ? 0.62 : 1,
+                      },
+                    ]}
                   >
-                    Nạp lại bản dịch
-                  </Text>
+                    <MaterialIcons name="replay" size={16} color={theme.accent} />
+                    <Text
+                      style={[styles.historyActionText, { color: theme.accent }]}
+                    >
+                      Nạp lại
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`Xóa bản dịch ${entry.sourceText}`}
+                    accessibilityRole="button"
+                    onPress={() => confirmDelete(entry)}
+                    style={({ pressed }) => [
+                      styles.historyItemAction,
+                      {
+                        backgroundColor: theme.dangerSurface,
+                        opacity: pressed ? 0.62 : 1,
+                      },
+                    ]}
+                  >
+                    <MaterialIcons
+                      name="delete-outline"
+                      size={17}
+                      color={theme.danger}
+                    />
+                    <Text
+                      style={[styles.historyActionText, { color: theme.danger }]}
+                    >
+                      Xóa
+                    </Text>
+                  </Pressable>
                 </View>
-              </Pressable>
+              </View>
             ))}
           </View>
           <Pressable
@@ -1964,11 +1996,13 @@ function AgentHistorySettings({
   theme,
   history,
   onClear,
+  onDeleteTurn,
   onRestore,
 }: {
   theme: AppTheme;
   history: AgentChatMessage[];
   onClear: () => void;
+  onDeleteTurn: (messageId: string) => void;
   onRestore: () => void;
 }) {
   const visibleHistory = history.filter(
@@ -1984,6 +2018,20 @@ function AgentHistorySettings({
       [
         { text: "Hủy", style: "cancel" },
         { text: "Xóa", style: "destructive", onPress: onClear },
+      ],
+    );
+  };
+  const confirmDeleteTurn = (messageId: string) => {
+    Alert.alert(
+      "Xóa lượt trò chuyện này?",
+      "Câu hỏi và câu trả lời trong lượt này sẽ bị xóa khỏi lịch sử.",
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: "Xóa",
+          style: "destructive",
+          onPress: () => onDeleteTurn(messageId),
+        },
       ],
     );
   };
@@ -2046,6 +2094,9 @@ function AgentHistorySettings({
           >
             {visibleHistory.map((message, index) => {
               const isUser = message.role === "user";
+              const isTurnEnd =
+                index === visibleHistory.length - 1 ||
+                visibleHistory[index + 1]?.role === "user";
               return (
                 <View
                   key={message.id}
@@ -2112,6 +2163,36 @@ function AgentHistorySettings({
                       >
                         {message.sources.length} nguồn tham khảo
                       </Text>
+                    </View>
+                  ) : null}
+                  {isTurnEnd ? (
+                    <View style={styles.historyItemActions}>
+                      <Pressable
+                        accessibilityLabel="Xóa lượt trò chuyện này"
+                        accessibilityRole="button"
+                        onPress={() => confirmDeleteTurn(message.id)}
+                        style={({ pressed }) => [
+                          styles.historyItemAction,
+                          {
+                            backgroundColor: theme.dangerSurface,
+                            opacity: pressed ? 0.62 : 1,
+                          },
+                        ]}
+                      >
+                        <MaterialIcons
+                          name="delete-outline"
+                          size={17}
+                          color={theme.danger}
+                        />
+                        <Text
+                          style={[
+                            styles.historyActionText,
+                            { color: theme.danger },
+                          ]}
+                        >
+                          Xóa lượt này
+                        </Text>
+                      </Pressable>
                     </View>
                   ) : null}
                 </View>
@@ -2779,13 +2860,23 @@ const styles = StyleSheet.create({
   historySource: { marginTop: 2, fontSize: 14, lineHeight: 20, fontWeight: "500" },
   historyTargetRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   historyTranslation: { marginTop: 2, fontSize: 16, lineHeight: 23, fontWeight: "700" },
-  historyRestoreRow: {
+  historyItemActions: {
     marginTop: 12,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  historyItemAction: {
+    minHeight: 36,
+    paddingHorizontal: 11,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 5,
   },
-  historyRestoreText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  historyActionText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
   restoreAgentButton: {
     minHeight: 48,
     marginBottom: 12,
