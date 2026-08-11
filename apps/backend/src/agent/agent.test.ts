@@ -6,7 +6,7 @@ import {
   buildAgentPayload,
   buildSystemPrompt,
   lockLatestAgentMessageLanguage,
-  runAgentTurn,
+  runChatCompletionsAgentTurn,
   sanitizeAgentRequest,
   type AgentEvent,
   type AgentTurnRequest,
@@ -304,7 +304,7 @@ describe("agent turn", () => {
       });
 
     const events: AgentEvent[] = [];
-    await runAgentTurn(
+    await runChatCompletionsAgentTurn(
       makeConfig(),
       {
         messages: [{ role: "user", content: "Thời tiết Hà Nội?" }],
@@ -348,7 +348,7 @@ describe("agent turn", () => {
     );
 
     const events: AgentEvent[] = [];
-    await runAgentTurn(
+    await runChatCompletionsAgentTurn(
       makeConfig(),
       {
         messages: [{ role: "user", content: "Chào" }],
@@ -373,7 +373,7 @@ describe("agent turn", () => {
     );
 
     const events: AgentEvent[] = [];
-    await runAgentTurn(
+    await runChatCompletionsAgentTurn(
       makeConfig(),
       {
         messages: [{ role: "user", content: "Chào" }],
@@ -402,7 +402,7 @@ describe("agent turn", () => {
         ]),
       );
 
-    await runAgentTurn(
+    await runChatCompletionsAgentTurn(
       { ...makeConfig(), exaApiKey: "" },
       {
         messages: [{ role: "user", content: "Chào" }],

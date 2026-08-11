@@ -20,9 +20,10 @@ import {
   splitSseEvents,
   type StreamingToolCall,
 } from "./stream.js";
+import { runRealtimeAgentTurn } from "./realtime-agent.js";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
-const MAX_TOOL_ROUNDS = 3;
+export const MAX_TOOL_ROUNDS = 3;
 const AGENT_TIMEOUT_MS = 120_000;
 const MAX_MESSAGES = 24;
 const MAX_TEXT_LENGTH = 6_000;
@@ -277,7 +278,31 @@ export function sanitizeAgentMessages(value: unknown): AgentMessage[] {
   return messages;
 }
 
+/**
+ * Routes an agent turn by input modality. The realtime model
+ * (qwen-audio-3.0-realtime-plus) does everything the EAgent voice/text flow
+ * needs — reasoning, web_search/Exa tool calls, and a text answer — in one
+ * model, so text-only turns go straight to it. Photo turns still need a
+ * vision model, and the realtime API takes no images, so they keep the
+ * qwen3.6-flash chat-completions path.
+ */
 export async function runAgentTurn(
+  config: BackendConfig,
+  request: AgentTurnRequest,
+  emit: AgentEmit,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (hasAgentImageContent(request.messages)) {
+    return runChatCompletionsAgentTurn(config, request, emit, signal);
+  }
+  return runRealtimeAgentTurn(config, request, emit, signal);
+}
+
+function hasAgentImageContent(messages: AgentMessage[]): boolean {
+  return messages.some((message) => Array.isArray(message.content));
+}
+
+export async function runChatCompletionsAgentTurn(
   config: BackendConfig,
   request: AgentTurnRequest,
   emit: AgentEmit,
@@ -473,7 +498,7 @@ class AgentUpstreamError extends Error {
   }
 }
 
-function agentErrorEvent(error: unknown, cancelled: boolean): AgentEvent {
+export function agentErrorEvent(error: unknown, cancelled: boolean): AgentEvent {
   if (cancelled) {
     return {
       type: "agent.error",
@@ -481,8 +506,9 @@ function agentErrorEvent(error: unknown, cancelled: boolean): AgentEvent {
       message: "Đã dừng câu trả lời",
     };
   }
-  if (error instanceof AgentUpstreamError) {
-    if (error.statusCode === 401 || error.statusCode === 403) {
+  const statusCode = agentErrorStatusCode(error);
+  if (statusCode !== undefined) {
+    if (statusCode === 401 || statusCode === 403) {
       return {
         type: "agent.error",
         code: "AUTH_UNAVAILABLE",
@@ -491,7 +517,7 @@ function agentErrorEvent(error: unknown, cancelled: boolean): AgentEvent {
       };
     }
     // A 404 here means the chosen model is not on this endpoint's catalog.
-    if (error.statusCode === 404) {
+    if (statusCode === 404) {
       return {
         type: "agent.error",
         code: "MODEL_UNAVAILABLE",
@@ -509,6 +535,19 @@ function agentErrorEvent(error: unknown, cancelled: boolean): AgentEvent {
     code: "AGENT_UNAVAILABLE",
     message: "Không thể kết nối trợ lý lúc này",
   };
+}
+
+/** Maps a status code out of either upstream error shape — the chat-completions
+ *  `AgentUpstreamError` or the realtime session's own error class — so the
+ *  realtime agent turn does not have to import `AgentUpstreamError` (which
+ *  would be a circular module dependency at class-evaluation time). */
+function agentErrorStatusCode(error: unknown): number | undefined {
+  if (error instanceof AgentUpstreamError) return error.statusCode;
+  if (error && typeof error === "object" && "statusCode" in error) {
+    const code = (error as { statusCode: unknown }).statusCode;
+    return typeof code === "number" ? code : undefined;
+  }
+  return undefined;
 }
 
 function collectSources(
