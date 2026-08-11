@@ -22,6 +22,8 @@ interface TranscriptPanelProps {
   theme: AppTheme;
   /** Signed drag progress: positive pulls the top frame, negative the bottom. */
   pull: Animated.Value;
+  /** Horizontal orb position used to keep the opening attached to it. */
+  orbTravel: Animated.Value;
 }
 
 export function TranscriptPanel({
@@ -35,6 +37,7 @@ export function TranscriptPanel({
   alignment,
   theme,
   pull,
+  orbTravel,
 }: TranscriptPanelProps) {
   // Positive means this frame is the one being pulled toward the orb.
   const squash = Animated.multiply(pull, alignment === "top" ? 1 : -1);
@@ -143,6 +146,7 @@ export function TranscriptPanel({
             {
               backgroundColor: theme.background,
               opacity: mouthOpacity,
+              transform: [{ translateX: orbTravel }],
             },
           ]}
         />
@@ -154,6 +158,7 @@ export function TranscriptPanel({
             {
               backgroundColor: theme.surfaceRaised,
               opacity: mouthOpacity,
+              transform: [{ translateX: orbTravel }],
             },
           ]}
         />
@@ -170,6 +175,7 @@ export function TranscriptPanel({
               transform: [
                 { scaleX: neckScaleX },
                 { scaleY: neckScaleY },
+                { translateX: orbTravel },
               ],
             },
           ]}
@@ -184,6 +190,7 @@ export function TranscriptPanel({
             {
               borderColor: frameColor,
               opacity: wrapOpacity,
+              transform: [{ translateX: orbTravel }],
             },
           ]}
         />
@@ -197,6 +204,7 @@ export function TranscriptPanel({
             {
               borderColor: frameColor,
               opacity: wrapOpacity,
+              transform: [{ translateX: orbTravel }],
             },
           ]}
         />

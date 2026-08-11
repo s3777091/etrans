@@ -1,20 +1,20 @@
 import type { InterpreterDirection } from "../qwen/types";
 
-export function directionForVerticalDelta(
-  deltaY: number,
-  upDirection: InterpreterDirection = "zh-to-vi",
-  downDirection: InterpreterDirection = "vi-to-zh",
+export function directionForHorizontalDelta(
+  deltaX: number,
+  rightDirection: InterpreterDirection = "zh-to-vi",
+  leftDirection: InterpreterDirection = "vi-to-zh",
 ): InterpreterDirection {
-  return deltaY < 0 ? upDirection : downDirection;
+  return deltaX > 0 ? rightDirection : leftDirection;
 }
 
 export function orbTravelForGesture(
   direction: InterpreterDirection,
-  deltaY: number,
+  deltaX: number,
   maxTravel: number,
-  upDirection: InterpreterDirection = "zh-to-vi",
+  rightDirection: InterpreterDirection = "zh-to-vi",
 ): number {
-  return direction === upDirection
-    ? Math.max(-maxTravel, Math.min(0, deltaY))
-    : Math.min(maxTravel, Math.max(0, deltaY));
+  return direction === rightDirection
+    ? Math.min(maxTravel, Math.max(0, deltaX))
+    : Math.max(-maxTravel, Math.min(0, deltaX));
 }
