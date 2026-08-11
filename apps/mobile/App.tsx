@@ -886,17 +886,16 @@ export default function App() {
           text={counterpartImageTranslation ?? counterpartText}
           theme={theme}
           pull={pull}
-          orbTravel={orbTravel}
         />
 
         <GestureOrb
           theme={theme}
-          rightDirection={directions.right}
-          leftDirection={directions.left}
-          rightLanguageLabel={languages.counterpart.label.toLowerCase()}
-          leftLanguageLabel="tiếng Việt"
-          rightColor={counterpartColor}
-          leftColor={vietnameseColor}
+          topDirection={directions.right}
+          bottomDirection={directions.left}
+          topLanguageLabel={languages.counterpart.label.toLowerCase()}
+          bottomLanguageLabel="tiếng Việt"
+          topColor={counterpartColor}
+          bottomColor={vietnameseColor}
           connected={connected}
           disabled={disabled}
           reduceMotion={reduceMotion}
@@ -920,7 +919,6 @@ export default function App() {
           text={imageError ?? vietnameseImageTranslation ?? vietnameseText}
           theme={theme}
           pull={pull}
-          orbTravel={orbTravel}
         />
           </>
         )}

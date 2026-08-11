@@ -5,14 +5,14 @@ import { Animated, Easing, PanResponder, StyleSheet, View } from "react-native";
 
 import type { InterpreterDirection } from "../qwen/types";
 import {
-  directionForHorizontalDelta,
+  directionForVerticalDelta,
   orbTravelForGesture,
 } from "./gesture-direction";
 import type { AppTheme } from "./theme";
 
 const GESTURE_START_THRESHOLD = 6;
 const DIRECTION_LOCK_THRESHOLD = 12;
-const HORIZONTAL_INTENT_RATIO = 1.2;
+const VERTICAL_INTENT_RATIO = 1.2;
 const ACTIVATION_THRESHOLD = 68;
 const MAX_TRAVEL = 112;
 const DOUBLE_TAP_WINDOW_MS = 320;
@@ -20,19 +20,19 @@ const RECALL_DURATION_MS = 540;
 
 interface GestureOrbProps {
   theme: AppTheme;
-  rightDirection: InterpreterDirection;
-  leftDirection: InterpreterDirection;
-  rightLanguageLabel: string;
-  leftLanguageLabel: string;
-  rightColor: string;
-  leftColor: string;
+  topDirection: InterpreterDirection;
+  bottomDirection: InterpreterDirection;
+  topLanguageLabel: string;
+  bottomLanguageLabel: string;
+  topColor: string;
+  bottomColor: string;
   connected: boolean;
   disabled: boolean;
   reduceMotion: boolean;
   waitingForTranslation: boolean;
   /** Signed drag progress shared with the transcript frames. */
   pull: Animated.Value;
-  /** Horizontal pulse position shared with the wrapping frame. */
+  /** Vertical gesture travel. The orb returns to zero while recording. */
   orbTravel: Animated.Value;
   onPrepare: (direction: InterpreterDirection) => void;
   onActivate: (direction: InterpreterDirection) => void;
@@ -42,12 +42,12 @@ interface GestureOrbProps {
 
 export function GestureOrb({
   theme,
-  rightDirection,
-  leftDirection,
-  rightLanguageLabel,
-  leftLanguageLabel,
-  rightColor,
-  leftColor,
+  topDirection,
+  bottomDirection,
+  topLanguageLabel,
+  bottomLanguageLabel,
+  topColor,
+  bottomColor,
   connected,
   disabled,
   reduceMotion,
@@ -77,8 +77,8 @@ export function GestureOrb({
   const settingsRef = useRef({
     disabled,
     reduceMotion,
-    rightDirection,
-    leftDirection,
+    topDirection,
+    bottomDirection,
   });
   const callbacksRef = useRef({
     onPrepare,
@@ -91,8 +91,8 @@ export function GestureOrb({
     settingsRef.current = {
       disabled,
       reduceMotion,
-      rightDirection,
-      leftDirection,
+      topDirection,
+      bottomDirection,
     };
     callbacksRef.current = { onPrepare, onActivate, onRelease, onDoubleTap };
   });
@@ -232,12 +232,12 @@ export function GestureOrb({
       // voice translation is disconnected. Dragging still respects disabled.
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gesture) => {
-        const horizontalDistance = Math.abs(gesture.dx);
         const verticalDistance = Math.abs(gesture.dy);
+        const horizontalDistance = Math.abs(gesture.dx);
         return (
           !settingsRef.current.disabled &&
-          horizontalDistance >= GESTURE_START_THRESHOLD &&
-          horizontalDistance > verticalDistance * HORIZONTAL_INTENT_RATIO
+          verticalDistance >= GESTURE_START_THRESHOLD &&
+          verticalDistance > horizontalDistance * VERTICAL_INTENT_RATIO
         );
       },
       onPanResponderGrant: () => {
@@ -252,19 +252,22 @@ export function GestureOrb({
       },
       onPanResponderMove: (_, gesture) => {
         if (settingsRef.current.disabled) return;
+        // Once recording starts, the mic belongs in the visual centre. Ignore
+        // further finger travel until release so it cannot drift off-axis.
+        if (activatedRef.current) return;
         if (!lockedDirectionRef.current) {
-          const horizontalDistance = Math.abs(gesture.dx);
           const verticalDistance = Math.abs(gesture.dy);
+          const horizontalDistance = Math.abs(gesture.dx);
           if (
-            horizontalDistance < DIRECTION_LOCK_THRESHOLD ||
-            horizontalDistance <= verticalDistance * HORIZONTAL_INTENT_RATIO
+            verticalDistance < DIRECTION_LOCK_THRESHOLD ||
+            verticalDistance <= horizontalDistance * VERTICAL_INTENT_RATIO
           ) {
             return;
           }
-          const direction = directionForHorizontalDelta(
-            gesture.dx,
-            settingsRef.current.rightDirection,
-            settingsRef.current.leftDirection,
+          const direction = directionForVerticalDelta(
+            gesture.dy,
+            settingsRef.current.topDirection,
+            settingsRef.current.bottomDirection,
           );
           lockedDirectionRef.current = direction;
           setEngaged(direction);
@@ -273,15 +276,15 @@ export function GestureOrb({
         const direction = lockedDirectionRef.current;
         const clamped = orbTravelForGesture(
           direction,
-          gesture.dx,
+          gesture.dy,
           MAX_TRAVEL,
-          settingsRef.current.rightDirection,
+          settingsRef.current.topDirection,
         );
         orbTravel.setValue(clamped);
         const distance = Math.abs(clamped);
         const progress = Math.min(1, distance / ACTIVATION_THRESHOLD);
         pull.setValue(
-          direction === settingsRef.current.rightDirection
+          direction === settingsRef.current.topDirection
             ? progress
             : -progress,
         );
@@ -297,6 +300,13 @@ export function GestureOrb({
           void Haptics.impactAsync(
             Haptics.ImpactFeedbackStyle.Medium,
           ).catch(() => undefined);
+          Animated.spring(orbTravel, {
+            toValue: 0,
+            stiffness: 320,
+            damping: 28,
+            mass: 0.68,
+            useNativeDriver: true,
+          }).start();
           callbacksRef.current.onActivate(direction);
         }
       },
@@ -311,23 +321,35 @@ export function GestureOrb({
     inputRange: [0, 0.24, 1],
     outputRange: [0.48, 0.32, 0],
   });
-  const ringScale = pulse.interpolate({
+  const ringScaleX = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.94, 1.72],
+    outputRange: [0.96, 1.08],
+  });
+  const ringScaleY = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.94, 1.92],
   });
   const trailingRingOpacity = trailingPulse.interpolate({
     inputRange: [0, 0.2, 1],
     outputRange: [0.4, 0.26, 0],
   });
-  const trailingRingScale = trailingPulse.interpolate({
+  const trailingRingScaleX = trailingPulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.96, 1.58],
+    outputRange: [0.98, 1.05],
+  });
+  const trailingRingScaleY = trailingPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.96, 1.7],
   });
   const recallOpacity = recall.interpolate({
     inputRange: [0, 0.28, 1],
     outputRange: [0, 0.46, 0],
   });
-  const recallScale = recall.interpolate({
+  const recallScaleX = recall.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1.08, 0.94],
+  });
+  const recallScaleY = recall.interpolate({
     inputRange: [0, 1],
     outputRange: [2.05, 0.94],
   });
@@ -340,10 +362,10 @@ export function GestureOrb({
   // The rim doubles as the server connection light: green when the live
   // session is up, red while it is down, accent while the mic is open.
   const gestureColor =
-    engaged === rightDirection
-      ? rightColor
-      : engaged === leftDirection
-        ? leftColor
+    engaged === topDirection
+      ? topColor
+      : engaged === bottomDirection
+        ? bottomColor
         : theme.accent;
   const rimColor = engaged
     ? gestureColor
@@ -361,7 +383,7 @@ export function GestureOrb({
           styles.orbAnchor,
           {
             transform: [
-              { translateX: orbTravel },
+              { translateY: orbTravel },
               { scale: dragScale },
             ],
           },
@@ -374,7 +396,7 @@ export function GestureOrb({
             {
               borderColor: gestureColor,
               opacity: ringOpacity,
-              transform: [{ scale: ringScale }],
+              transform: [{ scaleX: ringScaleX }, { scaleY: ringScaleY }],
             },
           ]}
         />
@@ -386,7 +408,10 @@ export function GestureOrb({
               {
                 borderColor: gestureColor,
                 opacity: trailingRingOpacity,
-                transform: [{ scale: trailingRingScale }],
+                transform: [
+                  { scaleX: trailingRingScaleX },
+                  { scaleY: trailingRingScaleY },
+                ],
               },
             ]}
           />
@@ -398,13 +423,16 @@ export function GestureOrb({
             {
               borderColor: gestureColor,
               opacity: recallOpacity,
-              transform: [{ scale: recallScale }],
+              transform: [
+                { scaleX: recallScaleX },
+                { scaleY: recallScaleY },
+              ],
             },
           ]}
         />
         <Animated.View
-          accessibilityLabel={`Kéo phải để nói ${rightLanguageLabel}, kéo trái để nói ${leftLanguageLabel}. Nhấn đúp để chụp ảnh và dịch chữ`}
-          accessibilityHint="Giữ và kéo ngang, sau đó thả để dịch"
+          accessibilityLabel={`Kéo lên để nói ${topLanguageLabel}, kéo xuống để nói ${bottomLanguageLabel}. Nhấn đúp để chụp ảnh và dịch chữ`}
+          accessibilityHint="Giữ và kéo dọc, sau đó thả để dịch"
           accessibilityRole="adjustable"
           accessibilityState={{ busy: isPulsing }}
           accessibilityValue={{
@@ -429,7 +457,7 @@ export function GestureOrb({
           <MaterialIcons
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            name={activated ? "mic" : "swap-horiz"}
+            name={activated ? "mic" : "swap-vert"}
             size={activated ? 32 : 39}
             color={activatedIconColor}
           />
