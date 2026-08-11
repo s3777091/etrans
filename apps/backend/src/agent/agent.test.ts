@@ -533,6 +533,10 @@ function makeConfig(): BackendConfig {
     qwenVoiceTranslationModel: "qwen3.6-flash",
     qwenTtsModel: "qwen-audio-3.0-tts-plus",
     qwenAudioVoice: "longanlingxin",
+    qwenLiveBaseUrl:
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    qwenLiveApiKey: "test-live-key-not-used",
+    qwenLiveVoice: "Tina",
     exaApiKey: "exa-test-key",
     host: "127.0.0.1",
     port: 8787,

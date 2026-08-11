@@ -6,6 +6,7 @@ import WebSocket from "ws";
 
 import { type BackendConfig } from "./config.js";
 import {
+  QWEN_LIVE_MODEL,
   isAgentLanguage,
   isInterpreterDirection,
   isTextTranslationModel,
@@ -13,6 +14,7 @@ import {
   languagesForDirection,
   type AgentLanguage,
   type InterpreterDirection,
+  type VoiceTranslationModel,
 } from "./models.js";
 import {
   runAgentTurn,
@@ -310,6 +312,13 @@ export async function createServer(config: BackendConfig) {
     (socket, request) => {
       const direction = request.query.direction as InterpreterDirection;
       const { source, target } = languagesForDirection(direction);
+      // The phone picks the dedicated LiveTranslate realtime model; the backend
+      // dials that same model upstream so its locked source-language ASR and
+      // translation pipeline run, instead of the generic audio model that
+      // auto-detects the source.
+      const liveModel =
+        (request.query.model?.trim() as VoiceTranslationModel | undefined) ||
+        QWEN_LIVE_MODEL;
       let audioBytes = 0;
       let setupComplete = false;
       let processing = false;
@@ -320,6 +329,7 @@ export async function createServer(config: BackendConfig) {
       const translation = new RealtimeTranslationSession(
         config,
         direction,
+        liveModel,
         (event) => sendLiveEvent(socket, event),
       );
 

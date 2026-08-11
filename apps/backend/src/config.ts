@@ -3,6 +3,15 @@ import { QWEN_AGENT_MODEL } from "./models.js";
 const DEFAULT_QWEN_BASE_URL =
   "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 
+/**
+ * The dedicated LiveTranslate realtime model is only served on the
+ * international DashScope endpoint, which needs its own key. The generic
+ * token-plan endpoint the rest of the backend talks to does not carry this
+ * model, so the live-translation WebSocket must point here.
+ */
+const DEFAULT_QWEN_LIVE_BASE_URL =
+  "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+
 export interface BackendConfig {
   dashscopeApiKey: string;
   qwenBaseUrl: string;
@@ -13,6 +22,11 @@ export interface BackendConfig {
   qwenVoiceTranslationModel: string;
   qwenTtsModel: string;
   qwenAudioVoice: string;
+  /** Base URL + key for the LiveTranslate realtime endpoint. The model lives
+   *  on a different host from the rest of the backend, so these are separate. */
+  qwenLiveBaseUrl: string;
+  qwenLiveApiKey: string;
+  qwenLiveVoice: string;
   /** Empty when no Exa key is configured, which disables agent web search. */
   exaApiKey: string;
   host: string;
@@ -28,6 +42,12 @@ export function getConfig(): BackendConfig {
   const qwenBaseUrl =
     process.env.QWEN_BASE_URL?.trim() || DEFAULT_QWEN_BASE_URL;
   validateQwenBaseUrl(qwenBaseUrl);
+
+  const qwenLiveBaseUrl =
+    process.env.QWEN_LIVE_BASE_URL?.trim() || DEFAULT_QWEN_LIVE_BASE_URL;
+  validateQwenBaseUrl(qwenLiveBaseUrl);
+  const qwenLiveApiKey =
+    process.env.QWEN_LIVE_API_KEY?.trim() || dashscopeApiKey;
 
   const port = Number.parseInt(process.env.PORT ?? "8787", 10);
   if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
@@ -49,6 +69,9 @@ export function getConfig(): BackendConfig {
     qwenTtsModel:
       process.env.QWEN_TTS_MODEL?.trim() || "qwen-audio-3.0-tts-plus",
     qwenAudioVoice: process.env.QWEN_AUDIO_VOICE?.trim() || "longanlingxin",
+    qwenLiveBaseUrl,
+    qwenLiveApiKey,
+    qwenLiveVoice: process.env.QWEN_LIVE_VOICE?.trim() || "Tina",
     exaApiKey: process.env.EXA_API_KEY?.trim() ?? "",
     host: process.env.HOST ?? "0.0.0.0",
     port,
