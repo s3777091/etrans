@@ -5,6 +5,7 @@ import {
   buildQwenChatCompletionsUrl,
   buildQwenRealtimeUrl,
   createImageOcrPayload,
+  createImageTranslationPayload,
   createMachineTranslationPayload,
   createServer,
   parseImageOcrResult,
@@ -184,7 +185,102 @@ describe("Qwen realtime proxy", () => {
   });
 });
 
-async function makeServer() {
+describe("single-pass image translation", () => {
+  it("reads and translates a photo in one call when both steps share a model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content:
+                  '{"sourceLanguage":"zh","text":"你好","translation":"Xin chào"}',
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const server = await makeServer({ qwenImageOcrModel: "qwen3.6-flash" });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/qwen/image-translate",
+      payload: {
+        imageDataUrl: `data:image/jpeg;base64,${"a".repeat(32)}`,
+        translationModel: "qwen3.6-flash",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      sourceLanguage: "zh",
+      targetLanguage: "vi",
+      sourceText: "你好",
+      translation: "Xin chào",
+    });
+    // The saving is the whole point: no second trip to the model host.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still translates separately when one pass returns only the text", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [
+              { message: { content: '{"sourceLanguage":"zh","text":"你好"}' } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: "Xin chào" } }] }),
+          { status: 200 },
+        ),
+      );
+    const server = await makeServer({ qwenImageOcrModel: "qwen3.6-flash" });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/qwen/image-translate",
+      payload: {
+        imageDataUrl: `data:image/jpeg;base64,${"a".repeat(32)}`,
+        translationModel: "qwen3.6-flash",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ translation: "Xin chào" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("single-pass image payload", () => {
+  it("asks for the text and its translation together", () => {
+    const payload = createImageTranslationPayload(
+      "data:image/jpeg;base64,abc",
+      "qwen3.6-flash",
+      "vi-en",
+      "Keep product names",
+    ) as {
+      messages: Array<{ content: Array<{ type: string; text?: string }> }>;
+      enable_thinking: boolean;
+    };
+    const instructions = payload.messages[0]?.content[1]?.text ?? "";
+
+    expect(instructions).toContain('"translation"');
+    expect(instructions).toContain("into English");
+    expect(instructions).toContain("Keep product names");
+    expect(payload.enable_thinking).toBe(false);
+  });
+});
+
+async function makeServer(overrides: { qwenImageOcrModel?: string } = {}) {
   const server = await createServer({
     dashscopeApiKey: "test-key-not-used",
     qwenBaseUrl:
@@ -199,6 +295,7 @@ async function makeServer() {
     exaApiKey: "",
     host: "127.0.0.1",
     port: 8787,
+    ...overrides,
   });
   servers.push(server);
   return server;

@@ -76,6 +76,8 @@ export type ImageSourceLanguage = "vi" | "zh" | "en" | "other";
 export type ImageTargetLanguage = "vi" | "zh" | "en";
 
 interface ImageOcrResult {
+  /** Set when one vision call read and translated the photo together. */
+  translation?: string;
   sourceLanguage: ImageSourceLanguage;
   text: string;
 }
@@ -168,17 +170,29 @@ export async function createServer(config: BackendConfig) {
           Authorization: `Bearer ${config.dashscopeApiKey}`,
           "Content-Type": "application/json",
         };
+        // Reading and translating in one pass saves a whole round trip to the
+        // model host, and the photo is the slow part to ship there. It only
+        // applies when the app wants the translating done by the same model
+        // that reads the image; a different choice still gets its own call.
+        const singlePass = translationModel === config.qwenImageOcrModel;
         const ocrResponse = await fetch(
           completionsUrl,
           {
             method: "POST",
             headers,
             body: JSON.stringify(
-              createImageOcrPayload(
-                imageDataUrl,
-                config.qwenImageOcrModel,
-                languagePair,
-              ),
+              singlePass
+                ? createImageTranslationPayload(
+                    imageDataUrl,
+                    config.qwenImageOcrModel,
+                    languagePair,
+                    translationPrompt,
+                  )
+                : createImageOcrPayload(
+                    imageDataUrl,
+                    config.qwenImageOcrModel,
+                    languagePair,
+                  ),
             ),
             signal: abortController.signal,
           },
@@ -213,38 +227,45 @@ export async function createServer(config: BackendConfig) {
           ocrResult.sourceLanguage,
           languagePair,
         );
-        const translationResponse = await fetch(completionsUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(
-            createMachineTranslationPayload(
-              ocrResult.text,
-              targetLanguage,
-              translationModel,
-              translationPrompt,
-            ),
-          ),
-          signal: abortController.signal,
-        });
+        // Empty whenever the single pass was skipped, or came back with the
+        // text alone — either way the dedicated translation call still runs.
+        let translation = ocrResult.translation ?? "";
 
-        if (!translationResponse.ok) {
-          request.log.warn(
-            { statusCode: translationResponse.status },
-            "Qwen machine translation was rejected",
-          );
-          return reply.code(503).send({
-            error:
-              translationResponse.status === 401 ||
-              translationResponse.status === 403
-                ? "AUTH_UNAVAILABLE"
-                : "IMAGE_TRANSLATION_UNAVAILABLE",
-            message: "Không thể dịch ảnh lúc này",
+        if (!translation) {
+          const translationResponse = await fetch(completionsUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(
+              createMachineTranslationPayload(
+                ocrResult.text,
+                targetLanguage,
+                translationModel,
+                translationPrompt,
+              ),
+            ),
+            signal: abortController.signal,
           });
+
+          if (!translationResponse.ok) {
+            request.log.warn(
+              { statusCode: translationResponse.status },
+              "Qwen machine translation was rejected",
+            );
+            return reply.code(503).send({
+              error:
+                translationResponse.status === 401 ||
+                translationResponse.status === 403
+                  ? "AUTH_UNAVAILABLE"
+                  : "IMAGE_TRANSLATION_UNAVAILABLE",
+              message: "Không thể dịch ảnh lúc này",
+            });
+          }
+
+          const translationCompletion =
+            (await translationResponse.json()) as QwenChatCompletion;
+          translation = readCompletionText(translationCompletion).trim();
         }
 
-        const translationCompletion =
-          (await translationResponse.json()) as QwenChatCompletion;
-        const translation = readCompletionText(translationCompletion).trim();
         if (!translation) {
           return reply.code(502).send({
             error: "EMPTY_IMAGE_TRANSLATION",
@@ -585,6 +606,55 @@ export async function createServer(config: BackendConfig) {
   return server;
 }
 
+/**
+ * Reads and translates the photo in a single vision call.
+ *
+ * The split OCR-then-translate pair costs two round trips to the model host,
+ * and the second one re-sends everything the first just read. Asking for both
+ * fields at once removes that whole leg; the caller still falls back to the
+ * dedicated translation request whenever this returns text without one.
+ */
+export function createImageTranslationPayload(
+  imageDataUrl: string,
+  model: string,
+  languagePair: LanguagePair = "vi-zh",
+  prompt = "",
+): Record<string, unknown> {
+  const counterpart = languagePair === "vi-zh" ? "Chinese" : "English";
+  const payload: Record<string, unknown> = {
+    model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: imageDataUrl } },
+          {
+            type: "text",
+            text: [
+              "Read every readable text in this image and translate it in the same pass.",
+              `The configured translation pair is Vietnamese and ${counterpart}.`,
+              "Detect the dominant source language as vi for Vietnamese, zh for Simplified or Traditional Chinese, en for English, or other.",
+              `Translate Vietnamese text into ${counterpart}, and translate anything else into Vietnamese.`,
+              "Preserve line order, names, numbers, prices, and units in both fields.",
+              ...(prompt ? [`Additional translation requirements: ${prompt}`] : []),
+              'Return only valid JSON in this exact shape: {"sourceLanguage":"vi|zh|en|other","text":"extracted text","translation":"translated text"}.',
+              "If there is no readable text, set both text and translation to an empty string.",
+            ].join(" "),
+          },
+        ],
+      },
+    ],
+    temperature: 0,
+    max_tokens: 3_000,
+    stream: false,
+  };
+  if (isHybridThinkingVisionModel(model)) {
+    payload.enable_thinking = false;
+    payload.response_format = { type: "json_object" };
+  }
+  return payload;
+}
+
 export function createImageOcrPayload(
   imageDataUrl: string,
   model: string,
@@ -692,17 +762,25 @@ export function parseImageOcrResult(value: string): ImageOcrResult | undefined {
   const objectEnd = cleaned.lastIndexOf("}");
   if (objectStart >= 0 && objectEnd > objectStart) {
     try {
-      const parsed = JSON.parse(
-        cleaned.slice(objectStart, objectEnd + 1),
-      ) as { sourceLanguage?: unknown; text?: unknown };
+      const parsed = JSON.parse(cleaned.slice(objectStart, objectEnd + 1)) as {
+        sourceLanguage?: unknown;
+        text?: unknown;
+        translation?: unknown;
+      };
       const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
       if (!text) return undefined;
+      // Present only when the single-pass payload asked for it.
+      const translation =
+        typeof parsed.translation === "string"
+          ? parsed.translation.trim()
+          : "";
       return {
         sourceLanguage: normalizeImageSourceLanguage(
           parsed.sourceLanguage,
           text,
         ),
         text,
+        ...(translation ? { translation } : {}),
       };
     } catch {
       // Fall through to the plain-text recovery path below.

@@ -6,7 +6,11 @@ import type {
 } from "../settings/translation-settings";
 import { buildImageTranslationUrl } from "./image-translator-url";
 
-const MAX_IMAGE_WIDTH = 1_440;
+// Shipping the photo is the slowest leg of an image translation, and the
+// vision model tiles it down anyway. 1280 matches what the agent already
+// sends and roughly halves the upload against the old 1440 at 0.78.
+const MAX_IMAGE_WIDTH = 1_280;
+const IMAGE_QUALITY = 0.7;
 
 export interface ImageTranslationResult {
   sourceLanguage: "vi" | "zh" | "en" | "other";
@@ -37,7 +41,7 @@ export async function translateCapturedPhoto(
   const rendered = await context.renderAsync();
   const compressed = await rendered.saveAsync({
     base64: true,
-    compress: 0.78,
+    compress: IMAGE_QUALITY,
     format: SaveFormat.JPEG,
   });
   if (!compressed.base64) {
