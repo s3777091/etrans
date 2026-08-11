@@ -29,6 +29,11 @@ import {
 } from "./src/interpreter/engine";
 import { appendTranscript } from "./src/interpreter/transcript";
 import {
+  addTranslationHistoryEntry,
+  parseTranslationHistory,
+  type TranslationHistoryEntry,
+} from "./src/history/translation-history";
+import {
   translateCapturedPhoto,
   type ImageTranslationResult,
 } from "./src/qwen/image-translator";
@@ -44,6 +49,7 @@ import {
   languagesForPair,
   parseTranslationSettings,
   type LanguagePair,
+  type TranslationDisplaySettings,
   type TranslationProfile,
   type TranslationSettings,
 } from "./src/settings/translation-settings";
@@ -78,6 +84,7 @@ const DEFAULT_METRICS: InterpreterMetrics = {
 
 const THEME_MODE_STORAGE_KEY = "interpreter.theme-mode";
 const TRANSLATION_SETTINGS_STORAGE_KEY = "interpreter.translation-settings";
+const TRANSLATION_HISTORY_STORAGE_KEY = "interpreter.translation-history";
 
 interface ETransIconNativeModule {
   setThemeMode: (
@@ -107,6 +114,12 @@ export default function App() {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [counterpartText, setCounterpartText] = useState("");
   const [vietnameseText, setVietnameseText] = useState("");
+  const counterpartTextRef = useRef("");
+  const vietnameseTextRef = useRef("");
+  const activeDirectionRef = useRef<InterpreterDirection | undefined>(
+    undefined,
+  );
+  const turnStartedAtRef = useRef(0);
   const [metrics, setMetrics] = useState(DEFAULT_METRICS);
   const [developerVisible, setDeveloperVisible] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
@@ -114,6 +127,9 @@ export default function App() {
   const [reduceMotion, setReduceMotion] = useState(false);
   const [translationSettings, setTranslationSettings] =
     useState<TranslationSettings>(DEFAULT_TRANSLATION_SETTINGS);
+  const [translationHistory, setTranslationHistory] = useState<
+    TranslationHistoryEntry[]
+  >([]);
   const [imageTranslation, setImageTranslation] =
     useState<ImageTranslationResult>();
   const [imageError, setImageError] = useState<string>();
@@ -128,14 +144,34 @@ export default function App() {
   const counterpartColor =
     translationSettings.frameColors[languages.counterpart.code];
   const vietnameseColor = translationSettings.frameColors.vi;
+  const transcriptFontSize =
+    translationSettings.display.textSize === "small"
+      ? 22
+      : translationSettings.display.textSize === "large"
+        ? 34
+        : 27;
+  const transcriptFontFamily =
+    translationSettings.display.font === "system"
+      ? undefined
+      : translationSettings.display.font;
+  const counterpartTextColor =
+    translationSettings.display.textColors[languages.counterpart.code] ===
+    "auto"
+      ? theme.text
+      : translationSettings.display.textColors[languages.counterpart.code];
+  const vietnameseTextColor =
+    translationSettings.display.textColors.vi === "auto"
+      ? theme.text
+      : translationSettings.display.textColors.vi;
 
   useEffect(() => {
     let active = true;
     void Promise.all([
       AsyncStorage.getItem(THEME_MODE_STORAGE_KEY),
       AsyncStorage.getItem(TRANSLATION_SETTINGS_STORAGE_KEY),
+      AsyncStorage.getItem(TRANSLATION_HISTORY_STORAGE_KEY),
     ])
-      .then(([savedMode, savedSettings]) => {
+      .then(([savedMode, savedSettings, savedHistory]) => {
         if (!active) return;
         if (
           savedMode === "system" ||
@@ -145,6 +181,7 @@ export default function App() {
           setThemeMode(savedMode);
         }
         setTranslationSettings(parseTranslationSettings(savedSettings));
+        setTranslationHistory(parseTranslationHistory(savedHistory));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -202,6 +239,8 @@ export default function App() {
       persistTranslationSettings(next);
       setCounterpartText("");
       setVietnameseText("");
+      counterpartTextRef.current = "";
+      vietnameseTextRef.current = "";
       setImageTranslation(undefined);
       setImageError(undefined);
       setFatalMessage(undefined);
@@ -216,6 +255,31 @@ export default function App() {
     },
     [persistTranslationSettings, translationSettings],
   );
+
+  const handleSaveDisplay = useCallback(
+    (display: TranslationDisplaySettings) => {
+      persistTranslationSettings({ ...translationSettings, display });
+    },
+    [persistTranslationSettings, translationSettings],
+  );
+
+  const addHistoryEntry = useCallback((entry: TranslationHistoryEntry) => {
+    setTranslationHistory((current) => {
+      const next = addTranslationHistoryEntry(current, entry);
+      void AsyncStorage.setItem(
+        TRANSLATION_HISTORY_STORAGE_KEY,
+        JSON.stringify(next),
+      ).catch(() => undefined);
+      return next;
+    });
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setTranslationHistory([]);
+    void AsyncStorage.removeItem(TRANSLATION_HISTORY_STORAGE_KEY).catch(
+      () => undefined,
+    );
+  }, []);
 
   const handleAudioError = useCallback((value: unknown) => {
     const error = value as Partial<QwenLiveError>;
@@ -305,22 +369,55 @@ export default function App() {
       const { source, target } = languagesForDirection(direction);
       const language = kind === "input" ? source : target;
       if (language === "vi") {
-        setVietnameseText((current) => appendTranscript(current, text, "vi"));
+        setVietnameseText((current) => {
+          const next = appendTranscript(current, text, "vi");
+          vietnameseTextRef.current = next;
+          return next;
+        });
       } else {
-        setCounterpartText((current) =>
-          appendTranscript(current, text, language),
-        );
+        setCounterpartText((current) => {
+          const next = appendTranscript(current, text, language);
+          counterpartTextRef.current = next;
+          return next;
+        });
       }
     });
     const removeError = engine.onError(handleAudioError);
-    const removeComplete = engine.onTurnComplete(() => setPhase("ready"));
+    const removeComplete = engine.onTurnComplete(() => {
+      const direction = activeDirectionRef.current;
+      if (direction) {
+        const { source, target } = languagesForDirection(direction);
+        const sourceText =
+          source === "vi"
+            ? vietnameseTextRef.current
+            : counterpartTextRef.current;
+        const translatedText =
+          target === "vi"
+            ? vietnameseTextRef.current
+            : counterpartTextRef.current;
+        if (sourceText.trim() && translatedText.trim()) {
+          addHistoryEntry({
+            id: `voice-${turnStartedAtRef.current}-${direction}`,
+            createdAt: Date.now(),
+            pair: translationSettings.activePair,
+            kind: "voice",
+            sourceLanguage: source,
+            targetLanguage: target,
+            sourceText,
+            translatedText,
+          });
+        }
+      }
+      activeDirectionRef.current = undefined;
+      setPhase("ready");
+    });
     return () => {
       removeMetrics();
       removeTranscript();
       removeError();
       removeComplete();
     };
-  }, [engine, handleAudioError]);
+  }, [addHistoryEntry, engine, handleAudioError, translationSettings.activePair]);
 
   const prepare = useCallback(
     (direction: InterpreterDirection) => {
@@ -335,6 +432,10 @@ export default function App() {
     (direction: InterpreterDirection) => {
       setCounterpartText("");
       setVietnameseText("");
+      counterpartTextRef.current = "";
+      vietnameseTextRef.current = "";
+      activeDirectionRef.current = direction;
+      turnStartedAtRef.current = Date.now();
       setImageTranslation(undefined);
       setImageError(undefined);
       setFatalMessage(undefined);
@@ -348,6 +449,7 @@ export default function App() {
     setPhase("translating");
     void deactivateAudio().then((turnStarted) => {
       if (!turnStarted) {
+        activeDirectionRef.current = undefined;
         setPhase((current) =>
           current === "translating" ? "ready" : current,
         );
@@ -363,6 +465,9 @@ export default function App() {
       setImageError(undefined);
       setCounterpartText("");
       setVietnameseText("");
+      counterpartTextRef.current = "";
+      vietnameseTextRef.current = "";
+      activeDirectionRef.current = undefined;
       try {
         const result = await translateCapturedPhoto(
           apiBaseUrl,
@@ -372,6 +477,16 @@ export default function App() {
           activeProfile,
         );
         setImageTranslation(result);
+        addHistoryEntry({
+          id: `image-${Date.now()}`,
+          createdAt: Date.now(),
+          pair: languagePair,
+          kind: "image",
+          sourceLanguage: result.sourceLanguage,
+          targetLanguage: result.targetLanguage,
+          sourceText: result.sourceText,
+          translatedText: result.translation,
+        });
         void Haptics.notificationAsync(
           Haptics.NotificationFeedbackType.Success,
         ).catch(() => undefined);
@@ -393,7 +508,7 @@ export default function App() {
         setImageBusy(false);
       }
     },
-    [activeProfile, apiBaseUrl, languagePair],
+    [activeProfile, addHistoryEntry, apiBaseUrl, languagePair],
   );
 
   const handleCameraError = useCallback((_message: string) => {
@@ -576,6 +691,9 @@ export default function App() {
           alignment="top"
           languageLabel={languages.counterpart.mainLabel}
           frameColor={counterpartColor}
+          textColor={counterpartTextColor}
+          textSize={transcriptFontSize}
+          fontFamily={transcriptFontFamily}
           note={counterpartNote}
           text={counterpartImageTranslation ?? counterpartText}
           theme={theme}
@@ -607,6 +725,9 @@ export default function App() {
           alignment="bottom"
           languageLabel="TIẾNG VIỆT"
           frameColor={vietnameseColor}
+          textColor={vietnameseTextColor}
+          textSize={transcriptFontSize}
+          fontFamily={transcriptFontFamily}
           note={vietnameseNote}
           text={imageError ?? vietnameseImageTranslation ?? vietnameseText}
           theme={theme}
@@ -621,9 +742,12 @@ export default function App() {
           systemColorScheme={systemColorScheme}
           reduceMotion={reduceMotion}
           settings={translationSettings}
+          history={translationHistory}
           onThemeModeChanged={handleThemeModeChanged}
           onSaveProfile={handleSaveProfile}
           onSaveFrameColors={handleSaveFrameColors}
+          onSaveDisplay={handleSaveDisplay}
+          onClearHistory={clearHistory}
           onClose={() => setSettingsVisible(false)}
         />
 

@@ -32,6 +32,11 @@ describe("translation settings", () => {
           },
         },
         frameColors: { vi: "#aabbcc", en: "wrong" },
+        display: {
+          textSize: "large",
+          font: "serif",
+          textColors: { vi: "#112233", en: "wrong" },
+        },
       }),
     );
 
@@ -42,5 +47,9 @@ describe("translation settings", () => {
     expect(parsed.frameColors.en).toBe(
       DEFAULT_TRANSLATION_SETTINGS.frameColors.en,
     );
+    expect(parsed.display.textSize).toBe("large");
+    expect(parsed.display.font).toBe("serif");
+    expect(parsed.display.textColors.vi).toBe("#112233");
+    expect(parsed.display.textColors.en).toBe("auto");
   });
 });

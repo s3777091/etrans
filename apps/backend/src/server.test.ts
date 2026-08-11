@@ -171,6 +171,7 @@ describe("Qwen realtime proxy", () => {
     expect(response.json()).toEqual({
       sourceLanguage: "vi",
       targetLanguage: "zh",
+      sourceText: "Xin chào",
       translation: "你好",
     });
     const translationRequest = JSON.parse(

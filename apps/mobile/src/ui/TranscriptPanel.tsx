@@ -11,6 +11,9 @@ const WRAP_NECK_EXTENT = 136;
 interface TranscriptPanelProps {
   languageLabel: string;
   frameColor: string;
+  textColor: string;
+  textSize: number;
+  fontFamily?: string;
   note?: string;
   text: string;
   alignment: "top" | "bottom";
@@ -24,6 +27,9 @@ interface TranscriptPanelProps {
 export function TranscriptPanel({
   languageLabel,
   frameColor,
+  textColor,
+  textSize,
+  fontFamily,
   note,
   text,
   alignment,
@@ -182,7 +188,18 @@ export function TranscriptPanel({
           }
           showsVerticalScrollIndicator={false}
         >
-          <Text selectable style={[styles.transcript, { color: theme.text }]}>
+          <Text
+            selectable
+            style={[
+              styles.transcript,
+              {
+                color: textColor,
+                fontFamily,
+                fontSize: textSize,
+                lineHeight: Math.round(textSize * 1.42),
+              },
+            ]}
+          >
             {text}
           </Text>
         </ScrollView>
@@ -257,9 +274,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   transcript: {
-    fontSize: 27,
     fontWeight: "500",
-    lineHeight: 38,
     letterSpacing: -0.35,
   },
 });

@@ -1,6 +1,7 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Alert,
   Animated,
   Easing,
   Image,
@@ -26,9 +27,14 @@ import {
   normalizeHexColor,
   pairTitle,
   type LanguagePair,
+  type TranslationDisplaySettings,
+  type TranslationFont,
   type TranslationProfile,
   type TranslationSettings,
+  type TranslationTextColor,
+  type TranslationTextSize,
 } from "../settings/translation-settings";
+import type { TranslationHistoryEntry } from "../history/translation-history";
 import type {
   TextTranslationModel,
   TranslationLanguage,
@@ -47,15 +53,18 @@ interface SettingsModalProps {
   systemColorScheme: ColorSchemeName;
   reduceMotion: boolean;
   settings: TranslationSettings;
+  history: TranslationHistoryEntry[];
   onThemeModeChanged: (mode: ThemeMode) => void;
   onSaveProfile: (pair: LanguagePair, profile: TranslationProfile) => void;
   onSaveFrameColors: (
     colors: Record<TranslationLanguage, string>,
   ) => void;
+  onSaveDisplay: (display: TranslationDisplaySettings) => void;
+  onClearHistory: () => void;
   onClose: () => void;
 }
 
-type SettingsRoute = "root" | "profile" | "colors";
+type SettingsRoute = "root" | "profile" | "colors" | "typography" | "history";
 type DropdownId = "text" | "voice";
 
 const THEME_MODES: Array<{
@@ -115,6 +124,37 @@ const COLOR_PRESETS = [
   "#7759C7",
 ] as const;
 
+const TEXT_SIZE_OPTIONS: Array<{
+  value: TranslationTextSize;
+  label: string;
+  size: number;
+}> = [
+  { value: "small", label: "Nhỏ", size: 22 },
+  { value: "medium", label: "Vừa", size: 27 },
+  { value: "large", label: "Lớn", size: 34 },
+];
+
+const FONT_OPTIONS: Array<{
+  value: TranslationFont;
+  label: string;
+  sample: string;
+  fontFamily?: string;
+}> = [
+  { value: "system", label: "Hệ thống", sample: "Bản dịch rõ ràng" },
+  {
+    value: "serif",
+    label: "Serif",
+    sample: "Bản dịch rõ ràng",
+    fontFamily: "serif",
+  },
+  {
+    value: "monospace",
+    label: "Monospace",
+    sample: "Bản dịch rõ ràng",
+    fontFamily: "monospace",
+  },
+];
+
 export function SettingsModal({
   visible,
   theme,
@@ -122,9 +162,12 @@ export function SettingsModal({
   systemColorScheme,
   reduceMotion,
   settings,
+  history,
   onThemeModeChanged,
   onSaveProfile,
   onSaveFrameColors,
+  onSaveDisplay,
+  onClearHistory,
   onClose,
 }: SettingsModalProps) {
   const [route, setRoute] = useState<SettingsRoute>("root");
@@ -136,6 +179,10 @@ export function SettingsModal({
   });
   const [draftColors, setDraftColors] = useState({
     ...settings.frameColors,
+  });
+  const [draftDisplay, setDraftDisplay] = useState<TranslationDisplaySettings>({
+    ...settings.display,
+    textColors: { ...settings.display.textColors },
   });
   const [openDropdown, setOpenDropdown] = useState<DropdownId>();
   const [reveal, setReveal] = useState<{
@@ -152,6 +199,10 @@ export function SettingsModal({
     setEditingPair(settings.activePair);
     setDraftProfile({ ...settings.profiles[settings.activePair] });
     setDraftColors({ ...settings.frameColors });
+    setDraftDisplay({
+      ...settings.display,
+      textColors: { ...settings.display.textColors },
+    });
     setOpenDropdown(undefined);
   }, [settings, visible]);
 
@@ -172,6 +223,14 @@ export function SettingsModal({
   const openColors = () => {
     setDraftColors({ ...settings.frameColors });
     setRoute("colors");
+  };
+
+  const openTypography = () => {
+    setDraftDisplay({
+      ...settings.display,
+      textColors: { ...settings.display.textColors },
+    });
+    setRoute("typography");
   };
 
   const saveProfile = () => {
@@ -195,6 +254,24 @@ export function SettingsModal({
       vi: normalizeHexColor(draftColors.vi),
       zh: normalizeHexColor(draftColors.zh),
       en: normalizeHexColor(draftColors.en),
+    });
+    setRoute("root");
+  };
+
+  const textColorsAreValid = colorLanguages.every((language) => {
+    const color = draftDisplay.textColors[language];
+    return color === "auto" || isValidHexColor(normalizeHexColor(color));
+  });
+
+  const saveDisplay = () => {
+    if (!textColorsAreValid) return;
+    onSaveDisplay({
+      ...draftDisplay,
+      textColors: {
+        vi: normalizeTextColor(draftDisplay.textColors.vi),
+        zh: normalizeTextColor(draftDisplay.textColors.zh),
+        en: normalizeTextColor(draftDisplay.textColors.en),
+      },
     });
     setRoute("root");
   };
@@ -232,7 +309,11 @@ export function SettingsModal({
       ? "Cài đặt"
       : route === "profile"
         ? pairTitle(editingPair)
-        : "Màu khung";
+        : route === "colors"
+          ? "Màu khung"
+          : route === "typography"
+            ? "Hiển thị bản dịch"
+            : "Lịch sử";
 
   return (
     <Modal
@@ -302,6 +383,9 @@ export function SettingsModal({
               onThemeChanged={changeTheme}
               onOpenProfile={openProfile}
               onOpenColors={openColors}
+              onOpenTypography={openTypography}
+              onOpenHistory={() => setRoute("history")}
+              historyCount={history.length}
             />
           ) : route === "profile" ? (
             <ProfileSettings
@@ -313,7 +397,7 @@ export function SettingsModal({
               onProfileChanged={setDraftProfile}
               onSave={saveProfile}
             />
-          ) : (
+          ) : route === "colors" ? (
             <ColorSettings
               theme={theme}
               languages={colorLanguages}
@@ -326,6 +410,21 @@ export function SettingsModal({
                 }))
               }
               onSave={saveColors}
+            />
+          ) : route === "typography" ? (
+            <TypographySettings
+              theme={theme}
+              languages={colorLanguages}
+              display={draftDisplay}
+              valid={textColorsAreValid}
+              onDisplayChanged={setDraftDisplay}
+              onSave={saveDisplay}
+            />
+          ) : (
+            <HistorySettings
+              theme={theme}
+              history={history}
+              onClear={onClearHistory}
             />
           )}
         </KeyboardAvoidingView>
@@ -392,6 +491,9 @@ function RootSettings({
   onThemeChanged,
   onOpenProfile,
   onOpenColors,
+  onOpenTypography,
+  onOpenHistory,
+  historyCount,
 }: {
   theme: AppTheme;
   themeMode: ThemeMode;
@@ -399,6 +501,9 @@ function RootSettings({
   onThemeChanged: (mode: ThemeMode, event: GestureResponderEvent) => void;
   onOpenProfile: (pair: LanguagePair) => void;
   onOpenColors: () => void;
+  onOpenTypography: () => void;
+  onOpenHistory: () => void;
+  historyCount: number;
 }) {
   const { counterpart } = languagesForPair(settings.activePair);
   return (
@@ -483,6 +588,32 @@ function RootSettings({
       </View>
 
       <View style={styles.section}>
+        <SectionTitle
+          icon="format-size"
+          title="Hiển thị bản dịch"
+          theme={theme}
+        />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Chỉnh cỡ chữ, màu chữ và font cho hai khung dịch.
+        </Text>
+        <View style={styles.options}>
+          <NavigationRow
+            theme={theme}
+            title="Chữ trong khung dịch"
+            note={`${textSizeLabel(settings.display.textSize)} • ${fontLabel(settings.display.font)}`}
+            onPress={onOpenTypography}
+            leading={
+              <MaterialIcons
+                name="text-fields"
+                size={25}
+                color={theme.accent}
+              />
+            }
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
         <SectionTitle icon="palette" title="Màu khung" theme={theme} />
         <Text style={[styles.helper, { color: theme.muted }]}>
           Chọn màu riêng cho từng ngôn ngữ đang dùng.
@@ -511,6 +642,28 @@ function RootSettings({
                   />
                 ))}
               </View>
+            }
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <SectionTitle icon="history" title="Lịch sử" theme={theme} />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Xem lại các bản dịch bằng giọng nói và hình ảnh.
+        </Text>
+        <View style={styles.options}>
+          <NavigationRow
+            theme={theme}
+            title="Lịch sử dịch"
+            note={
+              historyCount > 0
+                ? `${historyCount} bản dịch gần đây`
+                : "Chưa có bản dịch nào"
+            }
+            onPress={onOpenHistory}
+            leading={
+              <MaterialIcons name="history" size={25} color={theme.accent} />
             }
           />
         </View>
@@ -742,6 +895,403 @@ function ColorSettings({
       <SaveButton theme={theme} onPress={onSave} disabled={!valid} />
     </ScrollView>
   );
+}
+
+function TypographySettings({
+  theme,
+  languages,
+  display,
+  valid,
+  onDisplayChanged,
+  onSave,
+}: {
+  theme: AppTheme;
+  languages: TranslationLanguage[];
+  display: TranslationDisplaySettings;
+  valid: boolean;
+  onDisplayChanged: (display: TranslationDisplaySettings) => void;
+  onSave: () => void;
+}) {
+  const changeTextColor = (
+    language: TranslationLanguage,
+    color: TranslationTextColor,
+  ) => {
+    onDisplayChanged({
+      ...display,
+      textColors: { ...display.textColors, [language]: color },
+    });
+  };
+
+  return (
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Cỡ chữ" />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Áp dụng cho nội dung dịch ở cả hai khung.
+        </Text>
+        <View
+          accessibilityRole="radiogroup"
+          style={[
+            styles.textSizePicker,
+            { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+          ]}
+        >
+          {TEXT_SIZE_OPTIONS.map((option) => {
+            const selected = option.value === display.textSize;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                onPress={() =>
+                  onDisplayChanged({ ...display, textSize: option.value })
+                }
+                style={({ pressed }) => [
+                  styles.textSizeChoice,
+                  {
+                    backgroundColor: selected
+                      ? `${theme.accent}1F`
+                      : "transparent",
+                    opacity: pressed ? 0.62 : 1,
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: selected ? theme.accent : theme.text,
+                    fontSize: Math.min(option.size, 24),
+                    fontWeight: "700",
+                  }}
+                >
+                  A
+                </Text>
+                <Text
+                  style={[
+                    styles.textSizeLabel,
+                    { color: selected ? theme.accent : theme.muted },
+                  ]}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Font chữ" />
+        <View
+          style={[
+            styles.fontList,
+            { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+          ]}
+        >
+          {FONT_OPTIONS.map((option, index) => {
+            const selected = option.value === display.font;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                onPress={() =>
+                  onDisplayChanged({ ...display, font: option.value })
+                }
+                style={({ pressed }) => [
+                  styles.fontRow,
+                  index > 0 && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: theme.border,
+                  },
+                  { opacity: pressed ? 0.62 : 1 },
+                ]}
+              >
+                <View style={styles.fontCopy}>
+                  <Text style={[styles.fontLabel, { color: theme.text }]}>
+                    {option.label}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.fontSample,
+                      { color: theme.muted, fontFamily: option.fontFamily },
+                    ]}
+                  >
+                    {option.sample}
+                  </Text>
+                </View>
+                <MaterialIcons
+                  name={selected ? "radio-button-checked" : "radio-button-unchecked"}
+                  size={23}
+                  color={selected ? theme.accent : theme.faint}
+                />
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Màu chữ" />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Tự động sẽ đổi màu theo giao diện sáng hoặc tối.
+        </Text>
+        {languages.map((language) => {
+          const color = display.textColors[language];
+          const automatic = color === "auto";
+          const customValid = automatic || isValidHexColor(normalizeHexColor(color));
+          return (
+            <View
+              key={language}
+              style={[
+                styles.textColorGroup,
+                { borderBottomColor: theme.border },
+              ]}
+            >
+              <Text style={[styles.colorTitle, { color: theme.text }]}>
+                {LANGUAGE_META[language].label}
+              </Text>
+              <View style={styles.textPalette}>
+                <Pressable
+                  accessibilityLabel={`Màu chữ tự động cho ${LANGUAGE_META[language].label}`}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: automatic }}
+                  onPress={() => changeTextColor(language, "auto")}
+                  style={({ pressed }) => [
+                    styles.autoColor,
+                    {
+                      backgroundColor: automatic
+                        ? `${theme.accent}1F`
+                        : theme.surfaceRaised,
+                      borderColor: automatic ? theme.accent : theme.border,
+                      opacity: pressed ? 0.62 : 1,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.autoColorText,
+                      { color: automatic ? theme.accent : theme.muted },
+                    ]}
+                  >
+                    Tự động
+                  </Text>
+                </Pressable>
+                {COLOR_PRESETS.map((preset) => {
+                  const selected = !automatic && normalizeHexColor(color) === preset;
+                  return (
+                    <Pressable
+                      key={preset}
+                      accessibilityLabel={`Chọn màu chữ ${preset}`}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      onPress={() => changeTextColor(language, preset)}
+                      style={({ pressed }) => [
+                        styles.textSwatchTouch,
+                        { opacity: pressed ? 0.62 : 1 },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.textSwatch,
+                          {
+                            backgroundColor: preset,
+                            borderColor: selected ? theme.text : "transparent",
+                          },
+                        ]}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <TextInput
+                accessibilityLabel={`Mã màu chữ ${LANGUAGE_META[language].label}`}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={7}
+                value={automatic ? "" : color}
+                onChangeText={(value) => changeTextColor(language, value)}
+                placeholder="#RRGGBB"
+                placeholderTextColor={theme.faint}
+                selectionColor={theme.accent}
+                style={[
+                  styles.textColorInput,
+                  {
+                    backgroundColor: theme.surfaceRaised,
+                    borderColor: customValid ? theme.border : theme.danger,
+                    color: theme.text,
+                  },
+                ]}
+              />
+            </View>
+          );
+        })}
+      </View>
+
+      {!valid ? (
+        <Text style={[styles.validation, { color: theme.danger }]}>
+          Mã màu chữ phải có dạng #RRGGBB.
+        </Text>
+      ) : null}
+      <SaveButton theme={theme} onPress={onSave} disabled={!valid} />
+    </ScrollView>
+  );
+}
+
+function HistorySettings({
+  theme,
+  history,
+  onClear,
+}: {
+  theme: AppTheme;
+  history: TranslationHistoryEntry[];
+  onClear: () => void;
+}) {
+  const confirmClear = () => {
+    Alert.alert(
+      "Xóa lịch sử dịch?",
+      "Các bản dịch đã lưu trên thiết bị sẽ bị xóa.",
+      [
+        { text: "Hủy", style: "cancel" },
+        { text: "Xóa", style: "destructive", onPress: onClear },
+      ],
+    );
+  };
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      {history.length === 0 ? (
+        <View style={styles.historyEmpty}>
+          <View
+            style={[
+              styles.historyEmptyIcon,
+              { backgroundColor: `${theme.accent}16` },
+            ]}
+          >
+            <MaterialIcons name="history" size={31} color={theme.accent} />
+          </View>
+          <Text style={[styles.historyEmptyTitle, { color: theme.text }]}>
+            Chưa có lịch sử dịch
+          </Text>
+          <Text style={[styles.historyEmptyNote, { color: theme.muted }]}>
+            Bản dịch giọng nói và hình ảnh sẽ tự động xuất hiện ở đây.
+          </Text>
+        </View>
+      ) : (
+        <>
+          <Text style={[styles.historyIntro, { color: theme.muted }]}>
+            {history.length} bản dịch gần nhất được lưu trên thiết bị.
+          </Text>
+          <View
+            style={[
+              styles.historyList,
+              { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+            ]}
+          >
+            {history.map((entry, index) => (
+              <View
+                key={entry.id}
+                style={[
+                  styles.historyItem,
+                  index > 0 && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: theme.border,
+                  },
+                ]}
+              >
+                <View style={styles.historyMetaRow}>
+                  <View style={styles.historyKindRow}>
+                    <MaterialIcons
+                      name={entry.kind === "image" ? "photo-camera" : "mic"}
+                      size={16}
+                      color={theme.accent}
+                    />
+                    <Text style={[styles.historyMeta, { color: theme.accent }]}>
+                      {entry.kind === "image" ? "Ảnh" : "Giọng nói"}
+                    </Text>
+                  </View>
+                  <Text style={[styles.historyDate, { color: theme.faint }]}>
+                    {formatHistoryDate(entry.createdAt)}
+                  </Text>
+                </View>
+                <Text style={[styles.historyPair, { color: theme.muted }]}>
+                  {pairTitle(entry.pair)}
+                </Text>
+                <Text style={[styles.historyLanguage, { color: theme.muted }]}>
+                  {historyLanguageLabel(entry.sourceLanguage)}
+                </Text>
+                <Text
+                  numberOfLines={3}
+                  style={[styles.historySource, { color: theme.text }]}
+                >
+                  {entry.sourceText}
+                </Text>
+                <View style={styles.historyTargetRow}>
+                  <MaterialIcons name="south" size={16} color={theme.faint} />
+                  <Text style={[styles.historyLanguage, { color: theme.muted }]}>
+                    {LANGUAGE_META[entry.targetLanguage].label}
+                  </Text>
+                </View>
+                <Text
+                  numberOfLines={4}
+                  style={[styles.historyTranslation, { color: theme.text }]}
+                >
+                  {entry.translatedText}
+                </Text>
+              </View>
+            ))}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={confirmClear}
+            style={({ pressed }) => [
+              styles.clearHistoryButton,
+              {
+                backgroundColor: theme.dangerSurface,
+                opacity: pressed ? 0.68 : 1,
+              },
+            ]}
+          >
+            <MaterialIcons name="delete-outline" size={20} color={theme.danger} />
+            <Text style={[styles.clearHistoryText, { color: theme.danger }]}>
+              Xóa lịch sử
+            </Text>
+          </Pressable>
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function normalizeTextColor(color: TranslationTextColor): TranslationTextColor {
+  return color === "auto" ? color : normalizeHexColor(color);
+}
+
+function textSizeLabel(value: TranslationTextSize): string {
+  return TEXT_SIZE_OPTIONS.find((option) => option.value === value)?.label ?? "Vừa";
+}
+
+function fontLabel(value: TranslationFont): string {
+  return FONT_OPTIONS.find((option) => option.value === value)?.label ?? "Hệ thống";
+}
+
+function historyLanguageLabel(language: TranslationHistoryEntry["sourceLanguage"]): string {
+  return language === "other" ? "Ngôn ngữ tự phát hiện" : LANGUAGE_META[language].label;
+}
+
+function formatHistoryDate(value: number): string {
+  return new Date(value).toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function SectionTitle({
@@ -1123,6 +1673,140 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   validation: { marginTop: 12, fontSize: 13, lineHeight: 18 },
+  textSizePicker: {
+    minHeight: 82,
+    marginTop: 10,
+    padding: 4,
+    borderRadius: 15,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 3,
+  },
+  textSizeChoice: {
+    flex: 1,
+    minHeight: 72,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+  },
+  textSizeLabel: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
+  fontList: {
+    marginTop: 10,
+    borderRadius: 15,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  fontRow: {
+    minHeight: 68,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  fontCopy: { flex: 1 },
+  fontLabel: { fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  fontSample: { marginTop: 1, fontSize: 14, lineHeight: 20 },
+  textColorGroup: {
+    paddingVertical: 15,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  textPalette: {
+    minHeight: 46,
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  autoColor: {
+    height: 38,
+    paddingHorizontal: 11,
+    borderRadius: 11,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  autoColorText: { fontSize: 11, lineHeight: 16, fontWeight: "800" },
+  textSwatchTouch: {
+    flex: 1,
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  textSwatch: {
+    width: 31,
+    height: 31,
+    borderRadius: 16,
+    borderWidth: 2.5,
+  },
+  textColorInput: {
+    minHeight: 44,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    borderWidth: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  historyIntro: { marginTop: 8, marginBottom: 12, fontSize: 13, lineHeight: 19 },
+  historyList: {
+    borderRadius: 17,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  historyItem: { paddingHorizontal: 15, paddingVertical: 15 },
+  historyMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  historyKindRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  historyMeta: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  historyDate: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
+  historyPair: { marginTop: 4, fontSize: 11, lineHeight: 16 },
+  historyLanguage: { marginTop: 10, fontSize: 11, lineHeight: 16, fontWeight: "700" },
+  historySource: { marginTop: 2, fontSize: 14, lineHeight: 20, fontWeight: "500" },
+  historyTargetRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  historyTranslation: { marginTop: 2, fontSize: 16, lineHeight: 23, fontWeight: "700" },
+  clearHistoryButton: {
+    minHeight: 50,
+    marginTop: 16,
+    borderRadius: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  clearHistoryText: { fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  historyEmpty: {
+    minHeight: 420,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 30,
+  },
+  historyEmptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyEmptyTitle: {
+    marginTop: 16,
+    fontSize: 18,
+    lineHeight: 25,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  historyEmptyNote: {
+    marginTop: 5,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: "center",
+  },
   themeReveal: {
     position: "absolute",
     zIndex: 50,

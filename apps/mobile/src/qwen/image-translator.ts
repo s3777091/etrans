@@ -11,6 +11,7 @@ const MAX_IMAGE_WIDTH = 1_440;
 export interface ImageTranslationResult {
   sourceLanguage: "vi" | "zh" | "en" | "other";
   targetLanguage: "vi" | "zh" | "en";
+  sourceText: string;
   translation: string;
 }
 
@@ -18,6 +19,7 @@ interface ImageTranslationResponse {
   translation?: string;
   sourceLanguage?: string;
   targetLanguage?: string;
+  sourceText?: string;
   message?: string;
 }
 
@@ -56,6 +58,7 @@ export async function translateCapturedPhoto(
   if (
     !response.ok ||
     !result.translation ||
+    !result.sourceText ||
     (result.sourceLanguage !== "vi" &&
       result.sourceLanguage !== "zh" &&
       result.sourceLanguage !== "en" &&
@@ -69,6 +72,7 @@ export async function translateCapturedPhoto(
   return {
     sourceLanguage: result.sourceLanguage,
     targetLanguage: result.targetLanguage,
+    sourceText: result.sourceText.trim(),
     translation: result.translation.trim(),
   };
 }

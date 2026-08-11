@@ -206,6 +206,7 @@ export async function createServer(config: BackendConfig) {
         return {
           sourceLanguage: ocrResult.sourceLanguage,
           targetLanguage,
+          sourceText: ocrResult.text,
           translation,
         };
       } catch (error) {
