@@ -1,8 +1,5 @@
 import { type BackendConfig } from "./config.js";
-import {
-  type AgentLanguage,
-  type InterpreterDirection,
-} from "./models.js";
+import { type AgentLanguage } from "./models.js";
 import { buildQwenChatCompletionsUrl } from "./qwen-urls.js";
 
 const TRANSLATION_TIMEOUT_MS = 20_000;
@@ -34,16 +31,6 @@ export class VoiceTranslationError extends Error {
     super(message);
     this.name = "VoiceTranslationError";
   }
-}
-
-export function languagesForDirection(
-  direction: InterpreterDirection,
-): { source: AgentLanguage; target: AgentLanguage } {
-  const [source, target] = direction.split("-to-") as [
-    AgentLanguage,
-    AgentLanguage,
-  ];
-  return { source, target };
 }
 
 /**

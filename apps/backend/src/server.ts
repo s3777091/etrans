@@ -10,6 +10,7 @@ import {
   isInterpreterDirection,
   isTextTranslationModel,
   isVoiceTranslationModel,
+  languagesForDirection,
   type AgentLanguage,
   type InterpreterDirection,
 } from "./models.js";
@@ -22,7 +23,6 @@ import {
   MAX_AUDIO_DATA_URL_LENGTH,
   TranscriptionError,
   isSupportedAudioDataUrl,
-  transcribePcmSpeech,
   transcribeSpeech,
 } from "./agent/transcribe.js";
 import {
@@ -30,15 +30,9 @@ import {
   buildQwenRealtimeUrl,
 } from "./qwen-urls.js";
 import {
-  VoiceTranslationError,
-  languagesForDirection,
-  speechTextForTranslation,
-  translateVoiceText,
-} from "./voice-translation.js";
-import {
-  SpeechSynthesisError,
-  synthesizeSpeech,
-} from "./tts.js";
+  RealtimeTranslationError,
+  RealtimeTranslationSession,
+} from "./live-translation.js";
 import { StreamingSpeechSegmenter } from "./voice-segmentation.js";
 
 export {
@@ -115,7 +109,7 @@ export async function createServer(config: BackendConfig) {
     ok: true,
     provider: "qwen",
     model: config.qwenAsrModel,
-    protocol: "locked-asr-text-translation-tts",
+    protocol: "realtime-one-session",
   }));
 
   server.post<{ Body: ImageTranslateBody }>(
@@ -323,6 +317,11 @@ export async function createServer(config: BackendConfig) {
       let closed = false;
       const segmenter = new StreamingSpeechSegmenter();
       const pendingSegments: Buffer[] = [];
+      const translation = new RealtimeTranslationSession(
+        config,
+        direction,
+        (event) => sendLiveEvent(socket, event),
+      );
 
       request.log.info(
         { direction, asrLanguage: source, targetLanguage: target },
@@ -332,6 +331,7 @@ export async function createServer(config: BackendConfig) {
       const closeClient = (code = 1000, reason = "Session closed") => {
         if (closed) return;
         closed = true;
+        translation.close();
         closeSocket(socket, code, reason);
       };
 
@@ -355,36 +355,18 @@ export async function createServer(config: BackendConfig) {
             const segment = pendingSegments.shift();
             if (!segment) continue;
             try {
-              await runLockedVoiceTranslationSegment(
-                config,
-                segment,
-                source,
-                target,
-                (event) => sendLiveEvent(socket, event),
-              );
+              await translation.translate(segment);
+              sendLiveEvent(socket, { type: "response.segment.done" });
             } catch (error) {
-              // Noise and speech outside the selected ASR language disappear
-              // here instead of becoming a bogus translation on the phone.
+              // A sentence the interpreter would not take is worth one silent
+              // sentence, not the session and everything queued behind it.
               if (
-                error instanceof TranscriptionError &&
-                error.code === "EMPTY_SPEECH"
-              ) {
-                request.log.info(
-                  { source, bytes: segment.length },
-                  "Ignored audio outside locked ASR language",
-                );
-                continue;
-              }
-              // The translation itself already reached the phone. Losing its
-              // voice is worth one silent sentence, not the whole session and
-              // everything still queued behind it.
-              if (
-                error instanceof SpeechSynthesisError &&
-                error.code === "TTS_UNAVAILABLE"
+                error instanceof RealtimeTranslationError &&
+                error.code === "TRANSLATION_UNAVAILABLE"
               ) {
                 request.log.warn(
-                  { target, reason: error.message },
-                  "Sent a translated segment without speech",
+                  { direction, bytes: segment.length, reason: error.message },
+                  "Dropped one sentence from the voice session",
                 );
                 continue;
               }
@@ -412,8 +394,8 @@ export async function createServer(config: BackendConfig) {
         void processSegments();
       };
 
-      // Preserve the released app's setup protocol while the backend now runs
-      // three isolated stages instead of proxying one conversational model.
+      // Preserve the released app's setup protocol while the backend keeps the
+      // upstream realtime session to itself.
       setImmediate(() =>
         sendLiveEvent(socket, {
           type: "session.created",
@@ -452,6 +434,11 @@ export async function createServer(config: BackendConfig) {
           if (!chunk) {
             closeClient(1003, "Invalid base64 audio chunk");
             return;
+          }
+          if (!audioBytes) {
+            // Hold the handshake against the first words instead of against
+            // the pause at the end of them.
+            void translation.open().catch(() => undefined);
           }
           audioBytes += chunk.length;
           if (audioBytes > MAX_LIVE_PCM_BYTES) {
@@ -861,34 +848,6 @@ function isSupportedImageDataUrl(value: string): boolean {
   );
 }
 
-async function runLockedVoiceTranslationSegment(
-  config: BackendConfig,
-  pcm: Buffer,
-  source: AgentLanguage,
-  target: AgentLanguage,
-  send: (event: Record<string, unknown>) => void,
-): Promise<void> {
-  const transcript = await transcribePcmSpeech(config, pcm, source);
-  send({
-    type: "conversation.item.input_audio_transcription.completed",
-    transcript,
-  });
-
-  const translation = await translateVoiceText(
-    config,
-    transcript,
-    source,
-    target,
-  );
-  send({ type: "response.audio_transcript.done", transcript: translation });
-
-  const speechText = speechTextForTranslation(translation);
-  await synthesizeSpeech(config, speechText, target, (chunk) => {
-    send({ type: "response.audio.delta", delta: chunk.toString("base64") });
-  });
-  send({ type: "response.segment.done" });
-}
-
 function parseLiveClientEvent(value: string): LiveClientEvent | undefined {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -925,8 +884,7 @@ function sendLiveEvent(
 function voicePipelineErrorCode(error: unknown): string {
   if (
     error instanceof TranscriptionError ||
-    error instanceof VoiceTranslationError ||
-    error instanceof SpeechSynthesisError
+    error instanceof RealtimeTranslationError
   ) {
     return error.code;
   }

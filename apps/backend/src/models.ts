@@ -47,6 +47,16 @@ export function isInterpreterDirection(
   );
 }
 
+export function languagesForDirection(
+  direction: InterpreterDirection,
+): { source: AgentLanguage; target: AgentLanguage } {
+  const [source, target] = direction.split("-to-") as [
+    AgentLanguage,
+    AgentLanguage,
+  ];
+  return { source, target };
+}
+
 export function isVoiceTranslationModel(
   model: string,
 ): model is VoiceTranslationModel {

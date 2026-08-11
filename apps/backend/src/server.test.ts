@@ -29,7 +29,7 @@ describe("Qwen realtime proxy", () => {
       ok: true,
       provider: "qwen",
       model: "qwen-audio-3.0-realtime-plus",
-      protocol: "locked-asr-text-translation-tts",
+      protocol: "realtime-one-session",
     });
   });
 

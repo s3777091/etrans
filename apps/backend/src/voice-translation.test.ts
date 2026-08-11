@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type BackendConfig } from "./config.js";
+import { languagesForDirection } from "./models.js";
 import {
   createVoiceTranslationPayload,
-  languagesForDirection,
   parseVoiceTranslation,
   speechTextForTranslation,
   translateVoiceText,
