@@ -20,6 +20,7 @@ describe("Qwen-Audio live translation compatibility", () => {
       session: {
         modalities: ["audio", "text"],
         voice: "longanlingxin",
+        input_audio_transcription: { language: "vi" },
         input_audio_format: "pcm",
         output_audio_format: "pcm",
         turn_detection: null,
@@ -31,7 +32,7 @@ describe("Qwen-Audio live translation compatibility", () => {
       "longanlingxin",
     ) as { session: { instructions: string } };
     expect(event.session.instructions).toContain(
-      "The user speaks Vietnamese",
+      "input language is fixed as Vietnamese",
     );
     expect(event.session.instructions).toContain("Simplified Chinese");
     expect(event.session.instructions).toContain("not an assistant");

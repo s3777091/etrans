@@ -13,7 +13,7 @@
   -> loa điện thoại
 ```
 
-Model giọng nói mặc định: `qwen-audio-3.0-realtime-plus`. Máy chủ chuyển giao thức LiveTranslate của các bản app đã phát hành sang giao thức push-to-talk của Qwen Audio, đồng thời ép phiên thành bộ dịch một chiều theo hướng người dùng chọn. Dịch chữ trong ảnh dùng `qwen3.6-flash` với chế độ suy luận dài được tắt để ưu tiên tốc độ.
+Model giọng nói mặc định: `qwen-audio-3.0-realtime-plus`. Máy chủ chuyển giao thức LiveTranslate của các bản app đã phát hành sang giao thức push-to-talk của Qwen Audio, đồng thời khóa ngôn ngữ nhận dạng theo hướng kéo và ép phiên thành bộ dịch một chiều. Dịch chữ trong ảnh dùng `qwen3.6-flash` với chế độ suy luận dài được tắt để ưu tiên tốc độ.
 
 API key chỉ tồn tại ở máy chủ. Âm thanh đi qua máy chủ WebSocket vì Qwen không cung cấp token tạm thời an toàn để kết nối trực tiếp từ APK.
 
