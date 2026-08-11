@@ -7,8 +7,8 @@ import { buildQwenRealtimeUrl } from "../qwen-urls.js";
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
 /** 100 ms of 16 kHz mono PCM16, matching the realtime sample rate. */
 const AUDIO_CHUNK_BYTES = 3_200;
-/** Replay buffered speech quickly; model-level transcription verifies output. */
-const AUDIO_CHUNK_INTERVAL_MS = 10;
+/** Replay buffered speech quickly after VAD closes a phrase. */
+const AUDIO_CHUNK_INTERVAL_MS = 2;
 export const MAX_AUDIO_DATA_URL_LENGTH = 8 * 1024 * 1024;
 
 interface RealtimeMessage {
