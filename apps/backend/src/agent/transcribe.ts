@@ -30,6 +30,8 @@ const TRANSCRIPTION_LANGUAGE_NAMES: Record<AgentLanguage, string> = {
   en: "English",
 };
 
+type SpokenLanguage = AgentLanguage | "other" | "none";
+
 export class TranscriptionError extends Error {
   constructor(
     message: string,
@@ -100,6 +102,47 @@ export function createAsrSessionUpdate(
   };
 }
 
+/**
+ * This gate never chooses a route. It only verifies that speech matches the
+ * source language already locked by the drag direction.
+ */
+export function createLockedLanguageGateSessionUpdate(): Record<
+  string,
+  unknown
+> {
+  return {
+    event_id: "event_locked_language_gate",
+    type: "session.update",
+    session: {
+      modalities: ["text"],
+      instructions: [
+        "You are a strict spoken-language verification gate.",
+        "Identify the dominant language actually spoken in the audio without translating or transliterating it.",
+        "Return exactly one token: vi for Vietnamese, zh for Chinese, en for English, other for any other spoken language, or none for silence, music, and background noise.",
+        "Do not return a transcript, explanation, punctuation, or any additional text.",
+      ].join(" "),
+      input_audio_format: "pcm",
+      turn_detection: null,
+    },
+  };
+}
+
+export function parseSpokenLanguage(value: string): SpokenLanguage {
+  const normalized = cleanTranscript(value)
+    .toLocaleLowerCase("en")
+    .replace(/[^a-z-]+/g, " ")
+    .trim();
+  if (/^(?:vi|vietnamese)$/.test(normalized)) return "vi";
+  if (/^(?:zh|chinese|mandarin|mandarin chinese)$/.test(normalized)) {
+    return "zh";
+  }
+  if (/^(?:en|english)$/.test(normalized)) return "en";
+  if (/^(?:none|silence|noise|music|no speech)$/.test(normalized)) {
+    return "none";
+  }
+  return "other";
+}
+
 /** Qwen wraps language ids and silence markers in `<|...|>` tags. */
 export function cleanTranscript(value: string): string {
   return value
@@ -137,11 +180,29 @@ export async function transcribePcmSpeech(
     );
   }
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const transcript = cleanTranscript(
-      await runRealtimeTranscription(config, pcm, language),
+  const [detectedLanguage, firstTranscriptValue] = await Promise.all([
+    verifyPcmLanguage(config, pcm),
+    runRealtimeTranscription(config, pcm, language),
+  ]);
+  const firstTranscript = cleanTranscript(firstTranscriptValue);
+  if (
+    detectedLanguage !== language &&
+    !isExpressiveVocalization(firstTranscript)
+  ) {
+    throw new TranscriptionError(
+      "Âm thanh không khớp ngôn ngữ đã khóa",
+      "EMPTY_SPEECH",
     );
-    if (transcriptMatchesLockedLanguage(transcript, language)) return transcript;
+  }
+  if (transcriptMatchesLockedLanguage(firstTranscript, language)) {
+    return firstTranscript;
+  }
+
+  const retryTranscript = cleanTranscript(
+    await runRealtimeTranscription(config, pcm, language),
+  );
+  if (transcriptMatchesLockedLanguage(retryTranscript, language)) {
+    return retryTranscript;
   }
   throw new TranscriptionError(
     "Không nghe rõ nội dung trong ngôn ngữ đã chọn, hãy thử nói lại",
@@ -194,6 +255,33 @@ function runRealtimeTranscription(
   pcm: Buffer,
   language: AgentLanguage,
 ): Promise<string> {
+  return runRealtimeTextTask(
+    config,
+    pcm,
+    createAsrSessionUpdate(language),
+    true,
+  );
+}
+
+async function verifyPcmLanguage(
+  config: BackendConfig,
+  pcm: Buffer,
+): Promise<SpokenLanguage> {
+  const result = await runRealtimeTextTask(
+    config,
+    pcm,
+    createLockedLanguageGateSessionUpdate(),
+    false,
+  );
+  return parseSpokenLanguage(result);
+}
+
+function runRealtimeTextTask(
+  config: BackendConfig,
+  pcm: Buffer,
+  sessionUpdate: Record<string, unknown>,
+  allowInputTranscriptFallback: boolean,
+): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const socket = new WebSocket(
       buildQwenRealtimeUrl(config.qwenBaseUrl, config.qwenAsrModel),
@@ -217,7 +305,13 @@ function runRealtimeTranscription(
         socket.close(1000, "Transcription complete");
       }
       if (outcome.error) reject(outcome.error);
-      else resolve(outcome.text ?? (responseTranscript || inputTranscript));
+      else {
+        resolve(
+          outcome.text ??
+            (responseTranscript ||
+              (allowInputTranscriptFallback ? inputTranscript : "")),
+        );
+      }
     };
 
     const timeout = setTimeout(
@@ -291,9 +385,7 @@ function runRealtimeTranscription(
 
       switch (message.type) {
         case "session.created":
-          socket.send(
-            JSON.stringify(createAsrSessionUpdate(language)),
-          );
+          socket.send(JSON.stringify(sessionUpdate));
           break;
         case "session.updated":
           sendNextAudioChunk();
@@ -312,7 +404,11 @@ function runRealtimeTranscription(
           break;
         case "response.done":
           if (message.response?.status === "completed") {
-            finish({ text: responseTranscript || inputTranscript });
+            finish({
+              text:
+                responseTranscript ||
+                (allowInputTranscriptFallback ? inputTranscript : ""),
+            });
           } else {
             finish({
               error: new TranscriptionError(

@@ -21,7 +21,9 @@ import {
 import {
   cleanTranscript,
   createAsrSessionUpdate,
+  createLockedLanguageGateSessionUpdate,
   isSupportedAudioDataUrl,
+  parseSpokenLanguage,
   pcmFromWavDataUrl,
   transcriptMatchesLockedLanguage,
   vietnameseTranscriptConfidence,
@@ -472,6 +474,20 @@ describe("speech transcription", () => {
     );
     expect(vietnameseTranscriptConfidence("Xin chào, hôm nay bạn khỏe không?")).toBeGreaterThan(0);
     expect(vietnameseTranscriptConfidence("Sincha nay.")).toBeLessThan(2);
+  });
+
+  it("uses an independent verifier without changing the locked route", () => {
+    const gate = createLockedLanguageGateSessionUpdate() as {
+      session: Record<string, unknown>;
+    };
+    expect(gate.session).not.toHaveProperty("input_audio_transcription");
+    expect(String(gate.session.instructions)).toContain(
+      "verification gate",
+    );
+    expect(parseSpokenLanguage("vi")).toBe("vi");
+    expect(parseSpokenLanguage("Mandarin Chinese")).toBe("zh");
+    expect(parseSpokenLanguage("English")).toBe("en");
+    expect(parseSpokenLanguage("background noise")).toBe("other");
   });
 
   it("unwraps the WAV container down to raw PCM frames", () => {
