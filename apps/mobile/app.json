@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "ETrans",
+    "slug": "etrans",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/branding/etrans-light.png",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.interpreter.zhvi",
+      "icon": {
+        "light": "./assets/branding/etrans-light.png",
+        "dark": "./assets/branding/etrans-dark.png"
+      }
+    },
+    "android": {
+      "package": "com.interpreter.zhvi",
+      "icon": "./assets/branding/etrans-light.png",
+      "blockedPermissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/branding/etrans-light.png",
+        "backgroundColor": "#151713"
+      }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Cho phép ứng dụng nghe lời nói để phiên dịch trực tiếp."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Cho phép ứng dụng dùng camera để chụp ảnh và dịch chữ."
+        }
+      ],
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": false,
+          "androidPermissions": [
+            "android.permission.MODIFY_AUDIO_SETTINGS"
+          ],
+          "androidForegroundService": false,
+          "androidFSTypes": []
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}

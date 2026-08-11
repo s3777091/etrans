@@ -1,0 +1,22 @@
+{
+  "name": "qwen-live-interpreter",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "postinstall": "patch-package",
+    "dev:mobile": "npm run start --workspace @interpreter/mobile",
+    "dev:backend": "npm run dev --workspace @interpreter/backend",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.19.4"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
+  }
+}

@@ -1,0 +1,96 @@
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioStream.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioStream.kt
+index 8ecdcc1..3fdca8e 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioStream.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioStream.kt
+@@ -4,6 +4,7 @@ import android.Manifest
+ import android.media.AudioFormat
+ import android.media.AudioRecord
+ import android.media.MediaRecorder
++import android.media.audiofx.NoiseSuppressor
+ import androidx.annotation.RequiresPermission
+ import expo.modules.kotlin.AppContext
+ import expo.modules.kotlin.jni.NativeArrayBuffer
+@@ -39,6 +40,7 @@ class AudioStream(
+   val id: String = java.util.UUID.randomUUID().toString()
+ 
+   private var audioRecord: AudioRecord? = null
++  private var noiseSuppressor: NoiseSuppressor? = null
+   private var captureJob: Job? = null
+   private val coroutineScope = CoroutineScope(Dispatchers.IO)
+ 
+@@ -63,6 +65,7 @@ class AudioStream(
+     try {
+       recorder.startRecording()
+     } catch (e: IllegalStateException) {
++      releaseNoiseSuppressor()
+       recorder.release()
+       throw AudioStreamInitializationException(
+         "Failed to start the audio stream. The microphone is likely held by another app or by the system"
+@@ -85,6 +88,7 @@ class AudioStream(
+     captureJob?.cancel()
+     captureJob = null
+     audioRecord?.stop()
++    releaseNoiseSuppressor()
+     audioRecord?.release()
+     audioRecord = null
+     emitStatus()
+@@ -139,7 +143,7 @@ class AudioStream(
+   @RequiresPermission(Manifest.permission.RECORD_AUDIO)
+   private fun createAudioRecord(config: ResolvedAudioConfig): AudioRecord {
+     val recorder = AudioRecord(
+-      MediaRecorder.AudioSource.MIC,
++      MediaRecorder.AudioSource.VOICE_RECOGNITION,
+       config.sampleRate,
+       config.channelConfig,
+       config.audioEncoding,
+@@ -155,9 +159,31 @@ class AudioStream(
+       )
+     }
+ 
++    enableNoiseSuppression(recorder)
++
+     return recorder
+   }
+ 
++  private fun enableNoiseSuppression(recorder: AudioRecord) {
++    if (!NoiseSuppressor.isAvailable()) return
++    try {
++      noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.also { suppressor ->
++        if (!suppressor.enabled) suppressor.enabled = true
++      }
++    } catch (_: RuntimeException) {
++      noiseSuppressor = null
++    }
++  }
++
++  private fun releaseNoiseSuppressor() {
++    try {
++      noiseSuppressor?.release()
++    } catch (_: RuntimeException) {
++      // The device may have already released its audio effect chain.
++    }
++    noiseSuppressor = null
++  }
++
+   private fun startCaptureLoop(recorder: AudioRecord, config: ResolvedAudioConfig) {
+     captureJob = coroutineScope.launch {
+       val readSizeBytes = config.readSize
+diff --git a/node_modules/expo-audio/ios/AudioStream.swift b/node_modules/expo-audio/ios/AudioStream.swift
+index f938eff..b9105e8 100644
+--- a/node_modules/expo-audio/ios/AudioStream.swift
++++ b/node_modules/expo-audio/ios/AudioStream.swift
+@@ -30,12 +30,13 @@ class AudioStream: SharedObject {
+     guard !isStreaming else { return }
+ 
+     let session = AVAudioSession.sharedInstance()
+-    try session.setCategory(.record, mode: .measurement)
++    try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+     try session.setPreferredSampleRate(requestedSampleRate)
+     try session.setActive(true)
+ 
+     let engine = AVAudioEngine()
+     let inputNode = engine.inputNode
++    try? inputNode.setVoiceProcessingEnabled(true)
+     let hardwareFormat = inputNode.outputFormat(forBus: 0)
+ 
+     let targetSampleRate = requestedSampleRate

@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Expo / React Native generated projects and caches
+.expo/
+.expo-shared/
+web-build/
+android/
+ios/
+
+# Local environment and secrets
+.env
+.env.*
+!**/.env.example
+*.jks
+*.keystore
+*.pem
+*.key
+
+# Build outputs and test artifacts
+dist/
+build/
+coverage/
+artifacts/
+*.apk
+*.aab
+*.apks
+*.ipa
+*.jsbundle
+
+# Ảnh chụp màn hình và dump UI khi gỡ lỗi, chỉ nằm ở thư mục gốc.
+# Không dùng *.png trần vì assets/branding/*.png là tài nguyên thật của app.
+/*.png
+/*.xml
+
+# Android / IDE caches
+.gradle/
+.cxx/
+local.properties
+*.iml
+.idea/
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.swp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
