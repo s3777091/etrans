@@ -28,7 +28,7 @@ describe("Qwen realtime proxy", () => {
       ok: true,
       provider: "qwen",
       model: "qwen-audio-3.0-realtime-plus",
-      protocol: "qwen-audio-translation",
+      protocol: "locked-asr-text-translation-tts",
     });
   });
 
@@ -193,6 +193,8 @@ async function makeServer() {
     qwenImageTranslationModel: "qwen-mt-flash",
     qwenAgentModel: QWEN_AGENT_MODEL,
     qwenAsrModel: "qwen-audio-3.0-realtime-plus",
+    qwenVoiceTranslationModel: "qwen3.6-flash",
+    qwenTtsModel: "qwen-audio-3.0-tts-plus",
     qwenAudioVoice: "longanlingxin",
     exaApiKey: "",
     host: "127.0.0.1",

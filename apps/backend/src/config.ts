@@ -10,6 +10,8 @@ export interface BackendConfig {
   qwenImageTranslationModel: string;
   qwenAgentModel: string;
   qwenAsrModel: string;
+  qwenVoiceTranslationModel: string;
+  qwenTtsModel: string;
   qwenAudioVoice: string;
   /** Empty when no Exa key is configured, which disables agent web search. */
   exaApiKey: string;
@@ -42,6 +44,10 @@ export function getConfig(): BackendConfig {
     qwenAgentModel: process.env.QWEN_AGENT_MODEL?.trim() || QWEN_AGENT_MODEL,
     qwenAsrModel:
       process.env.QWEN_ASR_MODEL?.trim() || "qwen-audio-3.0-realtime-plus",
+    qwenVoiceTranslationModel:
+      process.env.QWEN_VOICE_TRANSLATION_MODEL?.trim() || "qwen3.6-flash",
+    qwenTtsModel:
+      process.env.QWEN_TTS_MODEL?.trim() || "qwen-audio-3.0-tts-plus",
     qwenAudioVoice: process.env.QWEN_AUDIO_VOICE?.trim() || "longanlingxin",
     exaApiKey: process.env.EXA_API_KEY?.trim() ?? "",
     host: process.env.HOST ?? "0.0.0.0",

@@ -22,6 +22,7 @@ import {
   MAX_AUDIO_DATA_URL_LENGTH,
   TranscriptionError,
   isSupportedAudioDataUrl,
+  transcribePcmSpeech,
   transcribeSpeech,
 } from "./agent/transcribe.js";
 import {
@@ -29,10 +30,14 @@ import {
   buildQwenRealtimeUrl,
 } from "./qwen-urls.js";
 import {
-  clientEventsForAudioTranslation,
-  parseRealtimeEvent,
-  serverEventsForAudioTranslation,
-} from "./live-translation.js";
+  VoiceTranslationError,
+  languagesForDirection,
+  translateVoiceText,
+} from "./voice-translation.js";
+import {
+  SpeechSynthesisError,
+  synthesizeSpeech,
+} from "./tts.js";
 
 export {
   buildQwenChatCompletionsUrl,
@@ -73,13 +78,16 @@ interface ImageOcrResult {
   text: string;
 }
 
-interface QueuedMessage {
-  data: string;
+interface LiveClientEvent {
+  event_id?: unknown;
+  type?: unknown;
+  audio?: unknown;
 }
 
-const MAX_QUEUED_MESSAGES = 256;
 const MAX_IMAGE_DATA_URL_LENGTH = 6 * 1024 * 1024;
 const IMAGE_TRANSLATION_TIMEOUT_MS = 20_000;
+/** One minute of 16 kHz mono PCM16. */
+const MAX_LIVE_PCM_BYTES = 16_000 * 2 * 60;
 
 export async function createServer(config: BackendConfig) {
   const server = Fastify({
@@ -103,7 +111,7 @@ export async function createServer(config: BackendConfig) {
     ok: true,
     provider: "qwen",
     model: config.qwenAsrModel,
-    protocol: "qwen-audio-translation",
+    protocol: "locked-asr-text-translation-tts",
   }));
 
   server.post<{ Body: ImageTranslateBody }>(
@@ -284,98 +292,103 @@ export async function createServer(config: BackendConfig) {
     },
     (socket, request) => {
       const direction = request.query.direction as InterpreterDirection;
-      const upstream = new WebSocket(
-        buildQwenRealtimeUrl(config.qwenBaseUrl, config.qwenAsrModel),
-        {
-          headers: {
-            Authorization: `Bearer ${config.dashscopeApiKey}`,
-          },
-        },
-      );
-      const pending: QueuedMessage[] = [];
+      const { source, target } = languagesForDirection(direction);
+      const audioChunks: Buffer[] = [];
+      let audioBytes = 0;
+      let setupComplete = false;
+      let processing = false;
       let closed = false;
 
-      const closeBoth = (code = 1000, reason = "Session closed") => {
+      const closeClient = (code = 1000, reason = "Session closed") => {
         if (closed) return;
         closed = true;
         closeSocket(socket, code, reason);
-        closeSocket(upstream, code, reason);
       };
 
-      const sendUpstream = (data: string) => {
-        if (upstream.readyState === WebSocket.OPEN) {
-          upstream.send(data);
-        } else if (pending.length >= MAX_QUEUED_MESSAGES) {
-          closeBoth(1009, "Too many queued audio messages");
-        } else {
-          pending.push({ data });
-        }
-      };
+      // Preserve the released app's setup protocol while the backend now runs
+      // three isolated stages instead of proxying one conversational model.
+      setImmediate(() =>
+        sendLiveEvent(socket, {
+          type: "session.created",
+          session: { input_language: source, output_language: target },
+        }),
+      );
 
       socket.on("message", (data, isBinary) => {
         if (isBinary) {
-          closeBoth(1003, "Expected JSON audio events");
+          closeClient(1003, "Expected JSON audio events");
           return;
         }
-        const message = parseRealtimeEvent(data.toString());
+        const message = parseLiveClientEvent(data.toString());
         if (!message) {
-          closeBoth(1003, "Invalid realtime event");
+          closeClient(1003, "Invalid realtime event");
           return;
         }
-        for (const event of clientEventsForAudioTranslation(
-          message,
-          direction,
-          config.qwenAudioVoice,
-        )) {
-          sendUpstream(JSON.stringify(event));
-        }
-      });
 
-      upstream.on("open", () => {
-        for (const message of pending.splice(0)) {
-          upstream.send(message.data);
-        }
-      });
-
-      upstream.on("message", (data) => {
-        const message = parseRealtimeEvent(data.toString());
-        if (!message) {
-          request.log.warn("Qwen returned an invalid realtime event");
-          sendProxyError(socket, "SERVICE_UNAVAILABLE");
-          closeBoth(1011, "Invalid Qwen event");
-          return;
-        }
-        for (const event of serverEventsForAudioTranslation(message)) {
-          if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify(event));
+        if (message.type === "session.update") {
+          if (!setupComplete) {
+            setupComplete = true;
+            sendLiveEvent(socket, {
+              ...(typeof message.event_id === "string"
+                ? { event_id: message.event_id }
+                : {}),
+              type: "session.updated",
+              session: { input_language: source, output_language: target },
+            });
           }
+          return;
         }
-      });
 
-      upstream.on("unexpected-response", (_upstreamRequest, response) => {
-        request.log.warn(
-          { statusCode: response.statusCode },
-          "Qwen realtime connection was rejected",
-        );
-        const errorCode =
-          response.statusCode === 401 || response.statusCode === 403
-            ? "AUTH_UNAVAILABLE"
-            : "SERVICE_UNAVAILABLE";
-        sendProxyError(socket, errorCode);
-        closeBoth(1011, errorCode);
-      });
+        if (message.type === "input_audio_buffer.append") {
+          if (!setupComplete || processing) return;
+          const chunk = decodeLiveAudioChunk(message.audio);
+          if (!chunk) {
+            closeClient(1003, "Invalid base64 audio chunk");
+            return;
+          }
+          audioBytes += chunk.length;
+          if (audioBytes > MAX_LIVE_PCM_BYTES) {
+            sendProxyError(
+              socket,
+              "AUDIO_TOO_LONG",
+              "Đoạn ghi âm dài quá 60 giây",
+            );
+            closeClient(1009, "Audio is too long");
+            return;
+          }
+          audioChunks.push(chunk);
+          return;
+        }
 
-      upstream.on("error", (error) => {
-        request.log.warn({ err: error }, "Qwen realtime connection failed");
-        sendProxyError(socket, "SERVICE_UNAVAILABLE");
-        closeBoth(1011, "Qwen connection failed");
+        if (message.type !== "session.finish" || processing) {
+          return;
+        }
+        processing = true;
+        const pcm = Buffer.concat(audioChunks, audioBytes);
+        void runLockedVoiceTranslation(
+          config,
+          pcm,
+          source,
+          target,
+          (event) => sendLiveEvent(socket, event),
+        ).catch((error: unknown) => {
+          request.log.warn(
+            { err: error },
+            "Locked voice translation failed",
+          );
+          const code = voicePipelineErrorCode(error);
+          const messageText =
+            error instanceof Error
+              ? error.message
+              : "Không thể dịch giọng nói lúc này";
+          sendProxyError(socket, code, messageText);
+          closeClient(1011, code);
+        });
       });
-
-      upstream.on("close", (code, reason) => {
-        closeBoth(normalizeCloseCode(code), safeReason(reason.toString()));
+      socket.on("close", () => {
+        closed = true;
       });
-      socket.on("close", () => closeBoth());
-      socket.on("error", () => closeBoth(1011, "Client connection failed"));
+      socket.on("error", () => closeClient(1011, "Client connection failed"));
     },
   );
 
@@ -695,14 +708,89 @@ function isSupportedImageDataUrl(value: string): boolean {
   );
 }
 
-function sendProxyError(socket: WebSocket, code: string): void {
+async function runLockedVoiceTranslation(
+  config: BackendConfig,
+  pcm: Buffer,
+  source: AgentLanguage,
+  target: AgentLanguage,
+  send: (event: Record<string, unknown>) => void,
+): Promise<void> {
+  const transcript = await transcribePcmSpeech(config, pcm, source);
+  send({
+    type: "conversation.item.input_audio_transcription.completed",
+    transcript,
+  });
+
+  const translation = await translateVoiceText(
+    config,
+    transcript,
+    source,
+    target,
+  );
+  send({ type: "response.audio_transcript.done", transcript: translation });
+
+  await synthesizeSpeech(config, translation, target, (chunk) => {
+    send({ type: "response.audio.delta", delta: chunk.toString("base64") });
+  });
+  send({ type: "session.finished" });
+}
+
+function parseLiveClientEvent(value: string): LiveClientEvent | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as LiveClientEvent)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeLiveAudioChunk(value: unknown): Buffer | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length < 4 ||
+    value.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(value)
+  ) {
+    return undefined;
+  }
+  const chunk = Buffer.from(value, "base64");
+  return chunk.length ? chunk : undefined;
+}
+
+function sendLiveEvent(
+  socket: WebSocket,
+  event: Record<string, unknown>,
+): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(event));
+  }
+}
+
+function voicePipelineErrorCode(error: unknown): string {
+  if (
+    error instanceof TranscriptionError ||
+    error instanceof VoiceTranslationError ||
+    error instanceof SpeechSynthesisError
+  ) {
+    return error.code;
+  }
+  return "SERVICE_UNAVAILABLE";
+}
+
+function sendProxyError(
+  socket: WebSocket,
+  code: string,
+  message = "Không thể kết nối dịch vụ Qwen",
+): void {
   if (socket.readyState !== WebSocket.OPEN) return;
   socket.send(
     JSON.stringify({
       type: "proxy.error",
       error: {
         code,
-        message: "Không thể kết nối dịch vụ Qwen",
+        message,
       },
     }),
   );
@@ -715,14 +803,4 @@ function closeSocket(socket: WebSocket, code: number, reason: string): void {
   ) {
     socket.close(code, reason.slice(0, 123));
   }
-}
-
-function normalizeCloseCode(code: number): number {
-  return code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006
-    ? code
-    : 1011;
-}
-
-function safeReason(reason: string): string {
-  return reason && reason.length <= 123 ? reason : "Qwen session closed";
 }

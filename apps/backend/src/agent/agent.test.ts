@@ -24,6 +24,7 @@ import {
   isSupportedAudioDataUrl,
   pcmFromWavDataUrl,
   transcriptMatchesLockedLanguage,
+  vietnameseTranscriptConfidence,
 } from "./transcribe.js";
 
 afterEach(() => {
@@ -446,6 +447,8 @@ describe("speech transcription", () => {
     expect(transcriptMatchesLockedLanguage("你好", "vi")).toBe(false);
     expect(transcriptMatchesLockedLanguage("你好", "zh")).toBe(true);
     expect(transcriptMatchesLockedLanguage("Xin chào", "zh")).toBe(false);
+    expect(vietnameseTranscriptConfidence("Xin chào, hôm nay bạn khỏe không?")).toBeGreaterThan(0);
+    expect(vietnameseTranscriptConfidence("Sincha nay.")).toBeLessThan(2);
   });
 
   it("unwraps the WAV container down to raw PCM frames", () => {
@@ -488,6 +491,8 @@ function makeConfig(): BackendConfig {
     qwenImageTranslationModel: "qwen3.6-flash",
     qwenAgentModel: QWEN_AGENT_MODEL,
     qwenAsrModel: "qwen3-asr-flash",
+    qwenVoiceTranslationModel: "qwen3.6-flash",
+    qwenTtsModel: "qwen-audio-3.0-tts-plus",
     qwenAudioVoice: "longanlingxin",
     exaApiKey: "exa-test-key",
     host: "127.0.0.1",

@@ -100,18 +100,51 @@ export async function transcribeSpeech(
     );
   }
 
+  return transcribePcmSpeech(config, pcm, language);
+}
+
+/** Transcribe raw 16 kHz mono PCM16 while keeping the UI-selected language. */
+export async function transcribePcmSpeech(
+  config: BackendConfig,
+  pcm: Buffer,
+  language: AgentLanguage,
+): Promise<string> {
+  if (!pcm.length) {
+    throw new TranscriptionError(
+      "Bản ghi âm không hợp lệ",
+      "ASR_UNAVAILABLE",
+    );
+  }
+
+  let fallback = "";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const transcript = cleanTranscript(
       await runRealtimeTranscription(config, pcm, language),
     );
-    if (transcriptMatchesLockedLanguage(transcript, language)) {
+    if (!transcriptMatchesLockedLanguage(transcript, language)) continue;
+    if (language !== "vi" || vietnameseTranscriptConfidence(transcript) >= 2) {
       return transcript;
     }
+    // Short Vietnamese can occasionally arrive as rough Latin phonetics
+    // (for example "Sincha"). Retry once, but retain a Latin-only fallback
+    // for valid names and product terms such as "OpenAI".
+    fallback = transcript;
   }
+  if (fallback) return fallback;
   throw new TranscriptionError(
     "Không nghe rõ nội dung trong ngôn ngữ đã chọn, hãy thử nói lại",
     "EMPTY_SPEECH",
   );
+}
+
+export function vietnameseTranscriptConfidence(transcript: string): number {
+  const markedLetters = transcript.match(
+    /[ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/giu,
+  )?.length ?? 0;
+  const commonWords = transcript.match(
+    /\b(?:xin|chào|tôi|bạn|hôm|nay|không|có|được|và|là|một)\b/giu,
+  )?.length ?? 0;
+  return markedLetters * 2 + commonWords;
 }
 
 /** Reject cross-script ASR output instead of silently changing language. */
