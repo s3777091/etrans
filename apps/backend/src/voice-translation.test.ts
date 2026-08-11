@@ -5,6 +5,7 @@ import {
   createVoiceTranslationPayload,
   languagesForDirection,
   parseVoiceTranslation,
+  speechTextForTranslation,
   translateVoiceText,
   translationMatchesTargetLanguage,
 } from "./voice-translation.js";
@@ -40,11 +41,18 @@ describe("locked one-way voice translation", () => {
     expect(payload.messages[0]?.content).toContain(
       "target language is fixed as Simplified Chinese",
     );
+    expect(payload.messages[0]?.content).toContain("at most one fitting emoji");
     expect(payload.messages[1]).toEqual({
       role: "user",
       content: "Xin chào",
     });
     expect(payload.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("shows emotion emoji but keeps it out of speech synthesis", () => {
+    expect(speechTextForTranslation("Haha 😄! Tôi hiểu rồi.")).toBe(
+      "Haha! Tôi hiểu rồi.",
+    );
   });
 
   it("parses only structured translations and checks the target script", () => {

@@ -10,7 +10,9 @@ import {
 } from "./types";
 
 const CONNECT_TIMEOUT_MS = 8_000;
-const FINISH_TIMEOUT_MS = 15_000;
+// Releasing only stops listening; the last automatically segmented sentence
+// may still be finishing locked ASR -> MT -> TTS on the server.
+const FINISH_TIMEOUT_MS = 30_000;
 const ZH_TO_VI_HOTWORDS = parseHotwords(
   process.env.EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI,
 );

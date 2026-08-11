@@ -456,9 +456,20 @@ describe("speech transcription", () => {
     );
     expect(cleanTranscript("<|vi|>  Xin   chào <|endoftext|>")).toBe("Xin chào");
     expect(transcriptMatchesLockedLanguage("Xin chào", "vi")).toBe(true);
+    expect(transcriptMatchesLockedLanguage("Hello, how are you?", "vi")).toBe(
+      false,
+    );
     expect(transcriptMatchesLockedLanguage("你好", "vi")).toBe(false);
     expect(transcriptMatchesLockedLanguage("你好", "zh")).toBe(true);
     expect(transcriptMatchesLockedLanguage("Xin chào", "zh")).toBe(false);
+    expect(transcriptMatchesLockedLanguage("Xin chào bạn", "en")).toBe(false);
+    expect(transcriptMatchesLockedLanguage("Hello, how are you?", "en")).toBe(
+      true,
+    );
+    expect(transcriptMatchesLockedLanguage("haha 😄", "vi")).toBe(true);
+    expect(vietnameseSession.session.instructions).toContain(
+      "speech in a different language, return empty text",
+    );
     expect(vietnameseTranscriptConfidence("Xin chào, hôm nay bạn khỏe không?")).toBeGreaterThan(0);
     expect(vietnameseTranscriptConfidence("Sincha nay.")).toBeLessThan(2);
   });

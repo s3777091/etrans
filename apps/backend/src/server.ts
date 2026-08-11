@@ -32,12 +32,14 @@ import {
 import {
   VoiceTranslationError,
   languagesForDirection,
+  speechTextForTranslation,
   translateVoiceText,
 } from "./voice-translation.js";
 import {
   SpeechSynthesisError,
   synthesizeSpeech,
 } from "./tts.js";
+import { StreamingSpeechSegmenter } from "./voice-segmentation.js";
 
 export {
   buildQwenChatCompletionsUrl,
@@ -293,16 +295,87 @@ export async function createServer(config: BackendConfig) {
     (socket, request) => {
       const direction = request.query.direction as InterpreterDirection;
       const { source, target } = languagesForDirection(direction);
-      const audioChunks: Buffer[] = [];
       let audioBytes = 0;
       let setupComplete = false;
       let processing = false;
+      let finishRequested = false;
       let closed = false;
+      const segmenter = new StreamingSpeechSegmenter();
+      const pendingSegments: Buffer[] = [];
+
+      request.log.info(
+        { direction, asrLanguage: source, targetLanguage: target },
+        "Voice session locked to gesture direction",
+      );
 
       const closeClient = (code = 1000, reason = "Session closed") => {
         if (closed) return;
         closed = true;
         closeSocket(socket, code, reason);
+      };
+
+      const finishSessionIfReady = () => {
+        if (
+          !finishRequested ||
+          processing ||
+          pendingSegments.length > 0 ||
+          closed
+        ) {
+          return;
+        }
+        sendLiveEvent(socket, { type: "session.finished" });
+      };
+
+      const processSegments = async () => {
+        if (processing || closed) return;
+        processing = true;
+        try {
+          while (pendingSegments.length && !closed) {
+            const segment = pendingSegments.shift();
+            if (!segment) continue;
+            try {
+              await runLockedVoiceTranslationSegment(
+                config,
+                segment,
+                source,
+                target,
+                (event) => sendLiveEvent(socket, event),
+              );
+            } catch (error) {
+              // Noise and speech outside the selected ASR language disappear
+              // here instead of becoming a bogus translation on the phone.
+              if (
+                error instanceof TranscriptionError &&
+                error.code === "EMPTY_SPEECH"
+              ) {
+                request.log.info(
+                  { source, bytes: segment.length },
+                  "Ignored audio outside locked ASR language",
+                );
+                continue;
+              }
+              throw error;
+            }
+          }
+        } catch (error) {
+          request.log.warn({ err: error }, "Locked voice translation failed");
+          const code = voicePipelineErrorCode(error);
+          sendProxyError(
+            socket,
+            code,
+            error instanceof Error ? error.message : undefined,
+          );
+          closeClient(1011, code);
+        } finally {
+          processing = false;
+          finishSessionIfReady();
+        }
+      };
+
+      const enqueueSegments = (segments: Buffer[]) => {
+        if (!segments.length || closed) return;
+        pendingSegments.push(...segments);
+        void processSegments();
       };
 
       // Preserve the released app's setup protocol while the backend now runs
@@ -340,7 +413,7 @@ export async function createServer(config: BackendConfig) {
         }
 
         if (message.type === "input_audio_buffer.append") {
-          if (!setupComplete || processing) return;
+          if (!setupComplete || finishRequested) return;
           const chunk = decodeLiveAudioChunk(message.audio);
           if (!chunk) {
             closeClient(1003, "Invalid base64 audio chunk");
@@ -356,34 +429,18 @@ export async function createServer(config: BackendConfig) {
             closeClient(1009, "Audio is too long");
             return;
           }
-          audioChunks.push(chunk);
+          enqueueSegments(segmenter.push(chunk));
           return;
         }
 
-        if (message.type !== "session.finish" || processing) {
+        if (message.type !== "session.finish" || finishRequested) {
           return;
         }
-        processing = true;
-        const pcm = Buffer.concat(audioChunks, audioBytes);
-        void runLockedVoiceTranslation(
-          config,
-          pcm,
-          source,
-          target,
-          (event) => sendLiveEvent(socket, event),
-        ).catch((error: unknown) => {
-          request.log.warn(
-            { err: error },
-            "Locked voice translation failed",
-          );
-          const code = voicePipelineErrorCode(error);
-          const messageText =
-            error instanceof Error
-              ? error.message
-              : "Không thể dịch giọng nói lúc này";
-          sendProxyError(socket, code, messageText);
-          closeClient(1011, code);
-        });
+        finishRequested = true;
+        const finalSegment = segmenter.flush();
+        if (finalSegment) pendingSegments.push(finalSegment);
+        if (pendingSegments.length) void processSegments();
+        else finishSessionIfReady();
       });
       socket.on("close", () => {
         closed = true;
@@ -713,7 +770,7 @@ function isSupportedImageDataUrl(value: string): boolean {
   );
 }
 
-async function runLockedVoiceTranslation(
+async function runLockedVoiceTranslationSegment(
   config: BackendConfig,
   pcm: Buffer,
   source: AgentLanguage,
@@ -734,10 +791,11 @@ async function runLockedVoiceTranslation(
   );
   send({ type: "response.audio_transcript.done", transcript: translation });
 
-  await synthesizeSpeech(config, translation, target, (chunk) => {
+  const speechText = speechTextForTranslation(translation);
+  await synthesizeSpeech(config, speechText, target, (chunk) => {
     send({ type: "response.audio.delta", delta: chunk.toString("base64") });
   });
-  send({ type: "session.finished" });
+  send({ type: "response.segment.done" });
 }
 
 function parseLiveClientEvent(value: string): LiveClientEvent | undefined {

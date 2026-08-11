@@ -86,6 +86,8 @@ export function createAsrSessionUpdate(
         `You are a ${languageName} speech transcription engine, not an assistant or translator.`,
         `The audio language is fixed as ${languageName} by the user interface; never auto-detect or switch languages.`,
         `Write exactly what the speaker says in ${languageName}.`,
+        `If the audio contains silence, background noise, music, or speech in a different language, return empty text instead of transliterating it into ${languageName}.`,
+        "Keep clear laughter and meaningful emotional vocalizations as natural words such as haha; never describe incidental noise.",
         "Do not translate, answer, explain, summarize, or add a label.",
         `Return only the verbatim ${languageName} transcript.`,
       ].join(" "),
@@ -135,21 +137,12 @@ export async function transcribePcmSpeech(
     );
   }
 
-  let fallback = "";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const transcript = cleanTranscript(
       await runRealtimeTranscription(config, pcm, language),
     );
-    if (!transcriptMatchesLockedLanguage(transcript, language)) continue;
-    if (language !== "vi" || vietnameseTranscriptConfidence(transcript) >= 2) {
-      return transcript;
-    }
-    // Short Vietnamese can occasionally arrive as rough Latin phonetics
-    // (for example "Sincha"). Retry once, but retain a Latin-only fallback
-    // for valid names and product terms such as "OpenAI".
-    fallback = transcript;
+    if (transcriptMatchesLockedLanguage(transcript, language)) return transcript;
   }
-  if (fallback) return fallback;
   throw new TranscriptionError(
     "Không nghe rõ nội dung trong ngôn ngữ đã chọn, hãy thử nói lại",
     "EMPTY_SPEECH",
@@ -171,12 +164,29 @@ export function transcriptMatchesLockedLanguage(
   transcript: string,
   language: AgentLanguage,
 ): boolean {
-  if (!transcript.trim()) return false;
-  const hasHan = /\p{Script=Han}/u.test(transcript);
+  const trimmed = transcript.trim();
+  if (!trimmed) return false;
+  const hasHan = /\p{Script=Han}/u.test(trimmed);
   if (language === "zh") {
-    return hasHan || !/\p{Script=Latin}/u.test(transcript);
+    return hasHan;
   }
-  return !hasHan;
+  if (hasHan) return false;
+  const hasLetters = /\p{L}/u.test(trimmed);
+  if (!hasLetters) return /\p{N}/u.test(trimmed);
+  if (isExpressiveVocalization(trimmed)) return true;
+  const vietnameseConfidence = vietnameseTranscriptConfidence(trimmed);
+  return language === "vi"
+    ? vietnameseConfidence >= 2
+    : vietnameseConfidence < 2;
+}
+
+function isExpressiveVocalization(value: string): boolean {
+  const withoutEmoji = value
+    .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, " ")
+    .trim();
+  return /^(?:(?:ha|he|hi){2,}|h+a+|h+e+|h+i+|ừ+|ờ+|ồ+|ôi+|á+|ơ+|wow+|oops+)[\s.!?,…]*$/iu.test(
+    withoutEmoji,
+  );
 }
 
 function runRealtimeTranscription(

@@ -432,7 +432,7 @@ export function GestureOrb({
         />
         <Animated.View
           accessibilityLabel={`Kéo lên để nói ${topLanguageLabel}, kéo xuống để nói ${bottomLanguageLabel}. Nhấn đúp để chụp ảnh và dịch chữ`}
-          accessibilityHint="Giữ và kéo dọc, sau đó thả để dịch"
+          accessibilityHint="Kéo và giữ để nghe liên tục; ứng dụng tự dịch theo từng khoảng ngắt, thả tay để dừng"
           accessibilityRole="adjustable"
           accessibilityState={{ busy: isPulsing }}
           accessibilityValue={{
