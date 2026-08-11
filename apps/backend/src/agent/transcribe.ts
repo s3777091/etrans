@@ -100,16 +100,31 @@ export async function transcribeSpeech(
     );
   }
 
-  const transcript = cleanTranscript(
-    await runRealtimeTranscription(config, pcm, language),
-  );
-  if (!transcript) {
-    throw new TranscriptionError(
-      "Không nghe rõ nội dung, hãy thử nói lại",
-      "EMPTY_SPEECH",
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const transcript = cleanTranscript(
+      await runRealtimeTranscription(config, pcm, language),
     );
+    if (transcriptMatchesLockedLanguage(transcript, language)) {
+      return transcript;
+    }
   }
-  return transcript;
+  throw new TranscriptionError(
+    "Không nghe rõ nội dung trong ngôn ngữ đã chọn, hãy thử nói lại",
+    "EMPTY_SPEECH",
+  );
+}
+
+/** Reject cross-script ASR output instead of silently changing language. */
+export function transcriptMatchesLockedLanguage(
+  transcript: string,
+  language: AgentLanguage,
+): boolean {
+  if (!transcript.trim()) return false;
+  const hasHan = /\p{Script=Han}/u.test(transcript);
+  if (language === "zh") {
+    return hasHan || !/\p{Script=Latin}/u.test(transcript);
+  }
+  return !hasHan;
 }
 
 function runRealtimeTranscription(

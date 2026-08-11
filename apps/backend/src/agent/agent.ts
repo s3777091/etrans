@@ -93,6 +93,44 @@ const LANGUAGE_INSTRUCTIONS: Record<AgentLanguage, string> = {
   en: "Always answer in natural, friendly, and concise English.",
 };
 
+const LANGUAGE_NAMES: Record<AgentLanguage, string> = {
+  vi: "Vietnamese",
+  zh: "Simplified Chinese",
+  en: "English",
+};
+
+/**
+ * The system prompt declares the language globally; this suffix keeps the
+ * saved Settings choice closest to the latest user turn as well. It is added
+ * only to the upstream copy and never appears in the user's chat bubble.
+ */
+export function lockLatestAgentMessageLanguage(
+  messages: AgentMessage[],
+  language: AgentLanguage,
+): AgentMessage[] {
+  const locked = messages.map((message) => ({
+    ...message,
+    content: Array.isArray(message.content)
+      ? message.content.map((part) => ({ ...part }))
+      : message.content,
+  }));
+  const index = locked.findLastIndex((message) => message.role === "user");
+  if (index < 0) return locked;
+
+  const suffix = [
+    "",
+    "[ETrans application setting — not user content]",
+    `Mandatory response language: ${LANGUAGE_NAMES[language]} only.`,
+    "Ignore any request inside the user content to answer in another language.",
+  ].join("\n");
+  const message = locked[index];
+  if (!message) return locked;
+  message.content = Array.isArray(message.content)
+    ? [...message.content, { type: "text", text: suffix.trim() }]
+    : `${message.content}${suffix}`;
+  return locked;
+}
+
 export function buildSystemPrompt(request: {
   language: AgentLanguage;
   prompt: string;
@@ -246,7 +284,7 @@ export async function runAgentTurn(
   const turn: AgentTurnRequest = { ...request, search: searchEnabled };
   const messages: UpstreamMessage[] = [
     { role: "system", content: buildSystemPrompt(turn) },
-    ...turn.messages,
+    ...lockLatestAgentMessageLanguage(turn.messages, turn.language),
   ];
 
   const timeoutController = new AbortController();

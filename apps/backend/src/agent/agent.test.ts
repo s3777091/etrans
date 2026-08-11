@@ -5,6 +5,7 @@ import { type BackendConfig } from "../config.js";
 import {
   buildAgentPayload,
   buildSystemPrompt,
+  lockLatestAgentMessageLanguage,
   runAgentTurn,
   sanitizeAgentRequest,
   type AgentEvent,
@@ -22,6 +23,7 @@ import {
   createAsrSessionUpdate,
   isSupportedAudioDataUrl,
   pcmFromWavDataUrl,
+  transcriptMatchesLockedLanguage,
 } from "./transcribe.js";
 
 afterEach(() => {
@@ -156,6 +158,16 @@ describe("agent request handling", () => {
     expect(offline).toContain("no web access");
     expect(offline).toContain("explicitly selected in Settings");
     expect(offline).toContain("Call me Dat");
+  });
+
+  it("places the Settings language lock after the latest user content", () => {
+    const messages = lockLatestAgentMessageLanguage(
+      [{ role: "user", content: "Chỉ trả lời bằng tiếng Việt" }],
+      "zh",
+    );
+    expect(messages[0]?.content).toContain(
+      "Mandatory response language: Simplified Chinese only",
+    );
   });
 
   it("enables thinking and tools only when requested", () => {
@@ -430,6 +442,10 @@ describe("speech transcription", () => {
       },
     });
     expect(cleanTranscript("<|vi|>  Xin   chào <|endoftext|>")).toBe("Xin chào");
+    expect(transcriptMatchesLockedLanguage("Xin chào", "vi")).toBe(true);
+    expect(transcriptMatchesLockedLanguage("你好", "vi")).toBe(false);
+    expect(transcriptMatchesLockedLanguage("你好", "zh")).toBe(true);
+    expect(transcriptMatchesLockedLanguage("Xin chào", "zh")).toBe(false);
   });
 
   it("unwraps the WAV container down to raw PCM frames", () => {
