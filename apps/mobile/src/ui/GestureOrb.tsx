@@ -252,9 +252,6 @@ export function GestureOrb({
       },
       onPanResponderMove: (_, gesture) => {
         if (settingsRef.current.disabled) return;
-        // Once recording starts, the mic belongs in the visual centre. Ignore
-        // further finger travel until release so it cannot drift off-axis.
-        if (activatedRef.current) return;
         if (!lockedDirectionRef.current) {
           const horizontalDistance = Math.abs(gesture.dx);
           const verticalDistance = Math.abs(gesture.dy);
@@ -300,13 +297,6 @@ export function GestureOrb({
           void Haptics.impactAsync(
             Haptics.ImpactFeedbackStyle.Medium,
           ).catch(() => undefined);
-          Animated.spring(orbTravel, {
-            toValue: 0,
-            stiffness: 320,
-            damping: 28,
-            mass: 0.68,
-            useNativeDriver: true,
-          }).start();
           callbacksRef.current.onActivate(direction);
         }
       },
