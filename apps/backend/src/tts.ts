@@ -9,6 +9,8 @@ import { buildQwenRealtimeUrl } from "./qwen-urls.js";
 
 const TTS_TIMEOUT_MS = 30_000;
 const TTS_SAMPLE_RATE = 24_000;
+/** How much of the translated wording the audio has to say back. */
+const MIN_SPOKEN_WORD_COVERAGE = 0.6;
 
 interface TtsServerEvent {
   type?: string;
@@ -428,15 +430,54 @@ function renderVietnameseSpeech(
   });
 }
 
+/**
+ * Speech and text never spell numbers the same way: the renderer reads "250"
+ * as "hai trăm năm mươi", and the verifying pass writes those words back. A
+ * verbatim comparison therefore silenced every translation carrying a digit,
+ * a unit, or an abbreviation. What the gate is actually for — keeping Chinese,
+ * Chinese-accented, or invented audio off the phone — survives a comparison on
+ * the words themselves.
+ */
 export function spokenTextMatchesExpected(
   spoken: string,
   expected: string,
 ): boolean {
-  const normalize = (value: string) =>
-    value
-      .normalize("NFC")
-      .toLocaleLowerCase("vi")
-      .replace(/[^\p{L}\p{N}]+/gu, "");
-  const normalizedExpected = normalize(expected);
-  return Boolean(normalizedExpected) && normalize(spoken) === normalizedExpected;
+  if (/\p{Script=Han}/u.test(spoken)) return false;
+  const spokenWords = spokenWordsOf(spoken);
+  const expectedWords = spokenWordsOf(expected);
+  if (!spokenWords.length || !expectedWords.length) return false;
+
+  // Digits are pronounced, never spelled, so only the words around them can
+  // prove the reading belongs to this translation.
+  const expectedLexical = expectedWords.filter((word) => /\p{L}/u.test(word));
+  if (!expectedLexical.length) return true;
+
+  const available = new Map<string, number>();
+  for (const word of spokenWords) {
+    available.set(word, (available.get(word) ?? 0) + 1);
+  }
+  let matched = 0;
+  for (const word of expectedLexical) {
+    const remaining = available.get(word) ?? 0;
+    if (remaining > 0) {
+      available.set(word, remaining - 1);
+      matched += 1;
+    }
+  }
+
+  // Spoken numbers expand into several words each, so the reading is allowed
+  // to run longer than the text — but not far enough to hide a whole invented
+  // sentence appended to it.
+  return (
+    spokenWords.length <= expectedWords.length * 3 + 6 &&
+    matched / expectedLexical.length >= MIN_SPOKEN_WORD_COVERAGE
+  );
+}
+
+function spokenWordsOf(value: string): string[] {
+  return value
+    .normalize("NFC")
+    .toLocaleLowerCase("vi")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
 }

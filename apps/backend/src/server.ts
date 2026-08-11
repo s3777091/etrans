@@ -375,6 +375,19 @@ export async function createServer(config: BackendConfig) {
                 );
                 continue;
               }
+              // The translation itself already reached the phone. Losing its
+              // voice is worth one silent sentence, not the whole session and
+              // everything still queued behind it.
+              if (
+                error instanceof SpeechSynthesisError &&
+                error.code === "TTS_UNAVAILABLE"
+              ) {
+                request.log.warn(
+                  { target, reason: error.message },
+                  "Sent a translated segment without speech",
+                );
+                continue;
+              }
               throw error;
             }
           }

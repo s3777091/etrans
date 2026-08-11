@@ -49,17 +49,45 @@ describe("dedicated Qwen TTS", () => {
     expect(task.payload.parameters).not.toHaveProperty("language_hints");
   });
 
-  it("requires Vietnamese renderer output to match the translation verbatim", () => {
+  it("accepts a reading of the same Vietnamese sentence", () => {
     expect(
       spokenTextMatchesExpected(
         "Xin chào, hôm nay bạn thế nào?",
         "Xin chào hôm nay bạn thế nào.",
       ),
     ).toBe(true);
+  });
+
+  it("accepts numbers and units the voice spells out", () => {
     expect(
       spokenTextMatchesExpected(
-        "你好。Xin chào.",
-        "Xin chào.",
+        "Giá là hai trăm năm mươi nghìn đồng.",
+        "Giá là 250 nghìn đồng.",
+      ),
+    ).toBe(true);
+    expect(
+      spokenTextMatchesExpected(
+        "Khách sạn cách đây khoảng ba ki lô mét.",
+        "Khách sạn cách đây khoảng 3 km.",
+      ),
+    ).toBe(true);
+  });
+
+  it("still blocks Chinese, silence, and invented speech", () => {
+    expect(spokenTextMatchesExpected("你好。Xin chào.", "Xin chào.")).toBe(
+      false,
+    );
+    expect(spokenTextMatchesExpected("", "Xin chào.")).toBe(false);
+    expect(
+      spokenTextMatchesExpected(
+        "Tôi không thể giúp bạn việc đó.",
+        "Giá là 250 nghìn đồng.",
+      ),
+    ).toBe(false);
+    expect(
+      spokenTextMatchesExpected(
+        "Xin chào bạn. Tôi là trợ lý ảo, tôi có thể giúp gì cho bạn hôm nay không, bạn cần tôi hỗ trợ điều gì?",
+        "Xin chào bạn.",
       ),
     ).toBe(false);
   });
