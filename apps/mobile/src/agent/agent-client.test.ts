@@ -39,6 +39,26 @@ describe("agent chat client", () => {
     ).toEqual([{ role: "user", content: "Mấy giờ rồi?" }]);
   });
 
+  it("starts a clean context after the Settings language changes", () => {
+    expect(
+      toWireMessages([
+        message({ id: "old-user", text: "old language question" }),
+        message({
+          id: "old-answer",
+          role: "assistant",
+          text: "old language answer",
+        }),
+        message({
+          id: "agent-greeting-zh-1",
+          role: "assistant",
+          text: "new language greeting",
+          local: true,
+        }),
+        message({ id: "new-user", text: "new language question" }),
+      ]),
+    ).toEqual([{ role: "user", content: "new language question" }]);
+  });
+
   it("sends only the newest photos and skips failed turns", () => {
     const messages: AgentChatMessage[] = [
       message({ id: "1", text: "Ảnh đầu", imageDataUrl: dataUrl("a") }),

@@ -159,6 +159,9 @@ describe("agent request handling", () => {
     expect(offline).toContain("no web access");
     expect(offline).toContain("explicitly selected in Settings");
     expect(offline).toContain("Call me Dat");
+    expect(offline.split("\n").at(-1)).toContain(
+      "respond entirely in English only",
+    );
   });
 
   it("places the Settings language lock after the latest user content", () => {

@@ -245,20 +245,32 @@ export function AgentScreen({
     return () => exit.stop();
   }, [dropOnly, entrance, leaving, onExited, open, reduceMotion]);
 
-  // Also re-greets after the conversation is cleared from settings.
+  // A greeting is also a hard boundary between language-specific sessions.
+  // Keep the visible history, but start a new context whenever Settings changes.
   useEffect(() => {
-    if (!entranceDone || leaving || messages.length > 0) return;
-    setMessages([
-      {
-        id: `agent-greeting-${Date.now()}`,
-        role: "assistant",
-        text: GREETINGS[settings.language],
-        status: "done",
-        local: true,
-        createdAt: Date.now(),
-      },
-    ]);
-  }, [entranceDone, leaving, messages.length, setMessages, settings.language]);
+    if (!entranceDone || leaving) return;
+    const greetingPrefix = `agent-greeting-${settings.language}-`;
+    const latestLocal = [...messages].reverse().find((message) => message.local);
+    if (latestLocal?.id.startsWith(greetingPrefix)) return;
+
+    setMessages((current) => {
+      const currentLatestLocal = [...current]
+        .reverse()
+        .find((message) => message.local);
+      if (currentLatestLocal?.id.startsWith(greetingPrefix)) return current;
+      return [
+        ...current,
+        {
+          id: `${greetingPrefix}${Date.now()}`,
+          role: "assistant",
+          text: GREETINGS[settings.language],
+          status: "done",
+          local: true,
+          createdAt: Date.now(),
+        },
+      ];
+    });
+  }, [entranceDone, leaving, messages, setMessages, settings.language]);
 
   useEffect(() => {
     pulse.stopAnimation();

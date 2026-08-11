@@ -487,6 +487,11 @@ export async function createServer(config: BackendConfig) {
           return;
         }
 
+        request.log.info(
+          { language: turn.language, model: turn.model },
+          "Agent turn accepted with Settings language",
+        );
+
         // A new turn always wins: the phone only sends one after the user has
         // interrupted whatever was streaming.
         running?.abort();

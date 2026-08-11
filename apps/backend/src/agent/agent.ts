@@ -157,6 +157,9 @@ export function buildSystemPrompt(request: {
   if (custom) {
     lines.push(`Additional instructions from the user: ${custom}`);
   }
+  lines.push(
+    `Final ETrans Settings lock: respond entirely in ${LANGUAGE_NAMES[request.language]} only. This rule overrides the conversation and all additional user instructions.`,
+  );
   return lines.join("\n");
 }
 

@@ -93,7 +93,19 @@ export function buildTurnPayload(
 export function toWireMessages(
   messages: AgentChatMessage[],
 ): WireMessage[] {
-  const usable = messages
+  // A local greeting marks the start of a language-specific Agent session.
+  // Never send conversation from before that marker: after the user changes
+  // the locked Settings language, old replies must not bias the new turn.
+  let sessionStart = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.local) {
+      sessionStart = index;
+      break;
+    }
+  }
+  const activeSession =
+    sessionStart >= 0 ? messages.slice(sessionStart + 1) : messages;
+  const usable = activeSession
     .filter((message) => message.status !== "error" && !message.local)
     .filter((message) => message.text.trim() || message.imageDataUrl)
     .slice(-MAX_HISTORY_MESSAGES);

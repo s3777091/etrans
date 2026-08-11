@@ -861,6 +861,7 @@ export default function App() {
 
         {mode === "agent" ? (
           <AgentScreen
+            key={`agent-${agentSettings.language}`}
             theme={theme}
             settings={agentSettings}
             frameColor={translationSettings.frameColors[agentSettings.language]}
