@@ -128,13 +128,44 @@ trong message. Sửa `**/*.md` hoặc `apps/backend/**` thì workflow tự bỏ 
 
 ### 3. Ký và cài lên máy
 
-Dùng [Sideloadly](https://sideloadly.io) hoặc AltStore trên Windows: cắm
-iPhone, kéo file `.ipa` vào, đăng nhập Apple ID **miễn phí**. Chữ ký kiểu này
-sống 7 ngày, hết hạn thì ký lại — không tốn đồng nào, nhưng không có Apple
-Developer Program ($99/năm) thì không tránh được vòng 7 ngày.
+Chữ ký bằng Apple ID **miễn phí** sống đúng 7 ngày. Không có cách nào kéo dài
+con số đó; chỉ có cách **tự động ký lại** trước khi hết hạn. Muốn vậy thì phải
+cài qua AltStore, không phải Sideloadly.
 
-Lần chạy đầu, iPhone chặn app lạ: Settings -> General -> VPN & Device
-Management -> chọn Apple ID vừa dùng -> Trust.
+| Cách cài | Tự gia hạn? |
+| --- | --- |
+| Sideloadly | Không. Mỗi 7 ngày phải cắm máy kéo lại `.ipa`. |
+| AltStore + AltServer (Windows) | Có, khi điện thoại cùng Wi-Fi với PC đang chạy AltServer. |
+| SideStore | Có, ngay trên điện thoại, không cần PC bật. |
+
+#### AltStore: cài sao cho nó tự ký lại
+
+1. Trên Windows cài **iTunes** và **iCloud** tải từ apple.com — bản trong
+   Microsoft Store không dùng được, AltServer cần bản installer.
+2. Cài [AltServer](https://altstore.io), bấm biểu tượng khay hệ thống ->
+   *Install AltStore* -> chọn iPhone -> đăng nhập Apple ID miễn phí.
+3. Mở **AltStore trên iPhone** -> tab *My Apps* -> nút `+` -> chọn file
+   `etrans-unsigned.ipa`. Phải cài từ trong AltStore thì AltStore mới quản lý
+   và gia hạn được; cài bằng Sideloadly thì nó không thấy app.
+4. iPhone: Settings -> General -> VPN & Device Management -> Apple ID vừa dùng
+   -> **Trust**. Chỉ cần làm lần đầu.
+5. Bật Settings -> General -> **Background App Refresh** cho AltStore.
+6. Để AltServer chạy thường trực trên PC: nhấn `Win+R`, gõ `shell:startup`,
+   tạo shortcut tới `AltServer.exe` trong thư mục đó.
+
+Sau bước này, mỗi khi iPhone và PC cùng mạng Wi-Fi, AltStore âm thầm ký lại
+trước hạn 7 ngày. Điện thoại đi xa cả tuần không về mạng nhà thì chữ ký vẫn
+hết hạn — lúc đó mở AltStore, bấm *Refresh All* khi về nhà là xong.
+
+Giới hạn của Apple ID miễn phí: tối đa **3 app** sideload cùng lúc và **10 App
+ID mỗi 7 ngày**. Ký lại app cũ không tốn thêm App ID.
+
+#### SideStore: gia hạn không cần PC
+
+Nếu PC không bật thường xuyên, dùng [SideStore](https://sidestore.io): tạo một
+lần *pairing file* bằng `jitterbugpair`, cài profile WireGuard loopback theo
+hướng dẫn của họ, sau đó SideStore tự ký lại ngay trên máy, không cần AltServer.
+Đổi lại là bước cài đặt ban đầu rắc rối hơn.
 
 ### 4. Quyền và mạng trên iOS
 
@@ -159,6 +190,51 @@ npm run ios --workspace @interpreter/mobile
 `.playAndRecord` / `.voiceChat` và bật voice processing. Luôn để `npm install`
 chạy xong (postinstall gọi patch-package) rồi mới prebuild, nếu không bản build
 mất khử vọng và người nói sẽ nghe lại chính giọng mình.
+
+## Biến môi trường đặt ở đâu
+
+Ba nơi, không trộn lẫn được: khoá bí mật chỉ nằm ở máy chủ, còn phần nhúng vào
+app thì ai tải `.ipa`/`.apk` về cũng đọc được.
+
+### 1. `apps/backend/.env` — máy chủ, chứa khoá bí mật
+
+| Biến | Bắt buộc | Mặc định | Dùng để làm gì |
+| --- | --- | --- | --- |
+| `DASHSCOPE_API_KEY` | có | – | Khoá Qwen. Máy chủ không chạy nếu thiếu. |
+| `QWEN_BASE_URL` | không | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | Endpoint Qwen. Phải là HTTPS hoặc WSS. |
+| `QWEN_LIVE_MODEL` | không | `qwen3.5-livetranslate-flash-realtime` | Model phiên dịch trực tiếp. Xem mục dưới: model này hiện không còn trên endpoint mặc định. |
+| `QWEN_IMAGE_OCR_MODEL` | không | `qwen3.6-flash` | Đọc chữ trong ảnh. Phải là model nhìn được ảnh. |
+| `QWEN_IMAGE_TRANSLATION_MODEL` | không | `qwen3.6-flash` | Dịch chữ đã đọc, khi app không chọn model riêng. |
+| `QWEN_AGENT_MODEL` | không | `qwen3.6-flash` | Model trợ lý mặc định khi app không gửi lựa chọn. |
+| `QWEN_ASR_MODEL` | không | `qwen-audio-3.0-realtime-plus` | Phiên realtime dùng để chép lời cho trợ lý. |
+| `EXA_API_KEY` | không | rỗng | Tìm kiếm web của trợ lý. Bỏ trống thì máy chủ tự gỡ công cụ tìm kiếm. Lấy ở <https://dashboard.exa.ai/api-keys>. |
+| `PORT` | không | `8787` | Cổng lắng nghe. |
+| `HOST` | không | `0.0.0.0` | Địa chỉ lắng nghe. |
+
+### 2. `apps/mobile/.env` — chỉ khi chạy dev trên máy
+
+| Biến | Dùng để làm gì |
+| --- | --- |
+| `EXPO_PUBLIC_API_BASE_URL` | Địa chỉ máy chủ. Bỏ trống thì app dùng `http://localhost:8787`. |
+| `EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI` | Bảng thuật ngữ chiều Trung → Việt, dạng JSON. |
+| `EXPO_PUBLIC_QWEN_HOTWORDS_VI_TO_ZH` | Bảng thuật ngữ chiều Việt → Trung. |
+
+Mọi biến `EXPO_PUBLIC_*` bị nhúng thẳng vào bundle. Tuyệt đối không đặt
+`DASHSCOPE_API_KEY` hay `EXA_API_KEY` ở đây.
+
+### 3. GitHub Actions — cho bản `.ipa`
+
+Settings → Secrets and variables → Actions → tab **Variables** (không phải
+Secrets, vì chúng không bí mật và workflow cần đọc được khi build):
+
+| Biến | Trạng thái |
+| --- | --- |
+| `EXPO_PUBLIC_API_BASE_URL` | Đã đặt: `https://etrans.protexa.cloud` |
+| `EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI` | Chưa đặt, không bắt buộc |
+| `EXPO_PUBLIC_QWEN_HOTWORDS_VI_TO_ZH` | Chưa đặt, không bắt buộc |
+
+Muốn thử nhanh một địa chỉ khác thì nhập ô `api_base_url` lúc bấm Run workflow,
+giá trị nhập tay được ưu tiên hơn biến repo.
 
 ## Model trên endpoint đang dùng
 
