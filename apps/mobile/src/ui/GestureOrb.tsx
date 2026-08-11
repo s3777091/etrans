@@ -331,19 +331,9 @@ export function GestureOrb({
     inputRange: [0, 1],
     outputRange: [2.05, 0.94],
   });
-  const dragScaleX = pull.interpolate({
+  const dragScale = pull.interpolate({
     inputRange: [-1, 0, 1],
-    outputRange: [1.045, 1, 1.045],
-    extrapolate: "clamp",
-  });
-  const dragScaleY = pull.interpolate({
-    inputRange: [-1, 0, 1],
-    outputRange: [0.96, 1, 0.96],
-    extrapolate: "clamp",
-  });
-  const dragRotate = pull.interpolate({
-    inputRange: [-1, 0, 1],
-    outputRange: ["-3deg", "0deg", "3deg"],
+    outputRange: [0.94, 1, 0.94],
     extrapolate: "clamp",
   });
 
@@ -372,9 +362,7 @@ export function GestureOrb({
           {
             transform: [
               { translateX: orbTravel },
-              { scaleX: dragScaleX },
-              { scaleY: dragScaleY },
-              { rotate: dragRotate },
+              { scale: dragScale },
             ],
           },
         ]}

@@ -1,4 +1,4 @@
-import { QWEN_LIVE_MODEL } from "./models.js";
+import { QWEN_AGENT_MODEL, QWEN_LIVE_MODEL } from "./models.js";
 
 const DEFAULT_QWEN_BASE_URL =
   "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
@@ -9,6 +9,10 @@ export interface BackendConfig {
   qwenLiveModel: string;
   qwenImageOcrModel: string;
   qwenImageTranslationModel: string;
+  qwenAgentModel: string;
+  qwenAsrModel: string;
+  /** Empty when no Exa key is configured, which disables agent web search. */
+  exaApiKey: string;
   host: string;
   port: number;
 }
@@ -36,6 +40,10 @@ export function getConfig(): BackendConfig {
       process.env.QWEN_IMAGE_OCR_MODEL?.trim() || "qwen3.6-flash",
     qwenImageTranslationModel:
       process.env.QWEN_IMAGE_TRANSLATION_MODEL?.trim() || "qwen3.6-flash",
+    qwenAgentModel: process.env.QWEN_AGENT_MODEL?.trim() || QWEN_AGENT_MODEL,
+    qwenAsrModel:
+      process.env.QWEN_ASR_MODEL?.trim() || "qwen-audio-3.0-realtime-plus",
+    exaApiKey: process.env.EXA_API_KEY?.trim() ?? "",
     host: process.env.HOST ?? "0.0.0.0",
     port,
   };

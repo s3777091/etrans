@@ -15,6 +15,11 @@ export interface TranslationHistoryEntry {
   translatedText: string;
 }
 
+export interface TranslationHistoryDisplayTexts {
+  counterpartText: string;
+  vietnameseText: string;
+}
+
 export const MAX_TRANSLATION_HISTORY = 50;
 
 export function addTranslationHistoryEntry(
@@ -44,6 +49,32 @@ export function parseTranslationHistory(
   } catch {
     return [];
   }
+}
+
+/** Maps a saved translation back onto the two transcript panels. */
+export function translationHistoryDisplayTexts(
+  entry: TranslationHistoryEntry,
+): TranslationHistoryDisplayTexts {
+  const counterpartLanguage = entry.pair === "vi-zh" ? "zh" : "en";
+  let counterpartText = "";
+  let vietnameseText = "";
+
+  if (entry.sourceLanguage === "vi") {
+    vietnameseText = entry.sourceText;
+  } else if (
+    entry.sourceLanguage === counterpartLanguage ||
+    entry.sourceLanguage === "other"
+  ) {
+    counterpartText = entry.sourceText;
+  }
+
+  if (entry.targetLanguage === "vi") {
+    vietnameseText = entry.translatedText;
+  } else if (entry.targetLanguage === counterpartLanguage) {
+    counterpartText = entry.translatedText;
+  }
+
+  return { counterpartText, vietnameseText };
 }
 
 function sanitizeEntry(value: unknown): TranslationHistoryEntry | undefined {

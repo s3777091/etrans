@@ -6,10 +6,11 @@ export const QWEN_LIVE_MODELS = [
   "qwen3-livetranslate-flash-realtime",
 ] as const;
 
+// Mirrors the backend allow-list for the translation step of image translation.
 export const QWEN_MT_MODELS = [
-  "qwen-mt-flash",
-  "qwen-mt-lite",
-  "qwen-mt-plus",
+  "qwen3.6-flash",
+  "qwen3.7-plus",
+  "qwen3.8-max",
 ] as const;
 
 export type VoiceTranslationModel = (typeof QWEN_LIVE_MODELS)[number];
@@ -34,6 +35,7 @@ export function languagesForDirection(direction: InterpreterDirection): {
 
 export type QwenLiveErrorCode =
   | "AUTH_UNAVAILABLE"
+  | "MODEL_UNAVAILABLE"
   | "SERVICE_UNAVAILABLE"
   | "NETWORK_ERROR"
   | "PROTOCOL_ERROR"

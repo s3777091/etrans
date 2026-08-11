@@ -67,12 +67,12 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   profiles: {
     "vi-zh": {
       prompt: "",
-      textModel: "qwen-mt-flash",
+      textModel: "qwen3.6-flash",
       voiceModel: QWEN_LIVE_MODEL,
     },
     "vi-en": {
       prompt: "",
-      textModel: "qwen-mt-flash",
+      textModel: "qwen3.6-flash",
       voiceModel: QWEN_LIVE_MODEL,
     },
   },

@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "scheme": "etrans",
     "icon": "./assets/branding/etrans-light.png",
     "ios": {
       "supportsTablet": false,
@@ -12,6 +13,12 @@
       "icon": {
         "light": "./assets/branding/etrans-light.png",
         "dark": "./assets/branding/etrans-dark.png"
+      },
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Cho phép ứng dụng kết nối máy chủ phiên dịch chạy trong mạng nội bộ.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {

@@ -4,6 +4,7 @@ import {
   MAX_TRANSLATION_HISTORY,
   addTranslationHistoryEntry,
   parseTranslationHistory,
+  translationHistoryDisplayTexts,
   type TranslationHistoryEntry,
 } from "./translation-history";
 
@@ -38,5 +39,40 @@ describe("translation history", () => {
     }
     expect(current).toHaveLength(MAX_TRANSLATION_HISTORY);
     expect(current[0]?.id).toBe(`voice-${MAX_TRANSLATION_HISTORY + 4}`);
+  });
+
+  it("restores both transcript panels in either direction", () => {
+    expect(translationHistoryDisplayTexts(entry)).toEqual({
+      counterpartText: "你好",
+      vietnameseText: "Xin chào",
+    });
+    expect(
+      translationHistoryDisplayTexts({
+        ...entry,
+        sourceLanguage: "zh",
+        targetLanguage: "vi",
+        sourceText: "谢谢",
+        translatedText: "Cảm ơn",
+      }),
+    ).toEqual({
+      counterpartText: "谢谢",
+      vietnameseText: "Cảm ơn",
+    });
+  });
+
+  it("shows an unknown image source in the counterpart panel", () => {
+    expect(
+      translationHistoryDisplayTexts({
+        ...entry,
+        kind: "image",
+        sourceLanguage: "other",
+        targetLanguage: "vi",
+        sourceText: "Bonjour",
+        translatedText: "Xin chào",
+      }),
+    ).toEqual({
+      counterpartText: "Bonjour",
+      vietnameseText: "Xin chào",
+    });
   });
 });

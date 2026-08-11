@@ -13,12 +13,20 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  AGENT_LANGUAGES,
+  MAX_AGENT_PROMPT_LENGTH,
+  type AgentLanguage,
+  type AgentModel,
+  type AgentSettings,
+} from "../settings/agent-settings";
 import {
   LANGUAGE_META,
   LANGUAGE_PAIRS,
@@ -35,6 +43,7 @@ import {
   type TranslationTextSize,
 } from "../settings/translation-settings";
 import type { TranslationHistoryEntry } from "../history/translation-history";
+import type { AgentChatMessage } from "../agent/agent-client";
 import type {
   TextTranslationModel,
   TranslationLanguage,
@@ -53,19 +62,33 @@ interface SettingsModalProps {
   systemColorScheme: ColorSchemeName;
   reduceMotion: boolean;
   settings: TranslationSettings;
+  agentSettings: AgentSettings;
   history: TranslationHistoryEntry[];
+  agentHistory: AgentChatMessage[];
   onThemeModeChanged: (mode: ThemeMode) => void;
   onSaveProfile: (pair: LanguagePair, profile: TranslationProfile) => void;
   onSaveFrameColors: (
     colors: Record<TranslationLanguage, string>,
   ) => void;
   onSaveDisplay: (display: TranslationDisplaySettings) => void;
+  onSaveAgent: (settings: AgentSettings) => void;
   onClearHistory: () => void;
+  onClearAgentHistory: () => void;
+  onRestoreHistory: (entry: TranslationHistoryEntry) => void;
+  onRestoreAgentHistory: () => void;
+  onOpenDiagnostics: () => void;
   onClose: () => void;
 }
 
-type SettingsRoute = "root" | "profile" | "colors" | "typography" | "history";
-type DropdownId = "text" | "voice";
+type SettingsRoute =
+  | "root"
+  | "profile"
+  | "colors"
+  | "typography"
+  | "agent"
+  | "translationHistory"
+  | "agentHistory";
+type DropdownId = "text" | "voice" | "agentModel";
 
 const THEME_MODES: Array<{
   id: ThemeMode;
@@ -83,18 +106,18 @@ const TEXT_MODEL_OPTIONS: Array<{
   note: string;
 }> = [
   {
-    value: "qwen-mt-flash",
-    label: "Qwen MT Flash",
-    note: "Cân bằng tốc độ và độ chính xác",
+    value: "qwen3.6-flash",
+    label: "Qwen 3.6 Flash",
+    note: "Nhanh, đủ tốt cho chữ trong ảnh",
   },
   {
-    value: "qwen-mt-lite",
-    label: "Qwen MT Lite",
-    note: "Nhanh nhất cho hội thoại ngắn",
+    value: "qwen3.7-plus",
+    label: "Qwen 3.7 Plus",
+    note: "Dịch mượt hơn với câu dài",
   },
   {
-    value: "qwen-mt-plus",
-    label: "Qwen MT Plus",
+    value: "qwen3.8-max",
+    label: "Qwen 3.8 Max",
     note: "Chính xác cao cho nội dung chuyên môn",
   },
 ];
@@ -116,12 +139,72 @@ const VOICE_MODEL_OPTIONS: Array<{
   },
 ];
 
+const AGENT_MODEL_OPTIONS: Array<{
+  value: AgentModel;
+  label: string;
+  note: string;
+}> = [
+  {
+    value: "qwen3.6-flash",
+    label: "Qwen 3.6 Flash",
+    note: "Nhanh, hợp cho trò chuyện hằng ngày",
+  },
+  {
+    value: "qwen3.7-plus",
+    label: "Qwen 3.7 Plus",
+    note: "Cân bằng, trả lời sâu hơn",
+  },
+  {
+    value: "qwen3.7-max",
+    label: "Qwen 3.7 Max",
+    note: "Suy luận tốt cho câu hỏi khó",
+  },
+  {
+    value: "qwen3.8-max",
+    label: "Qwen 3.8 Max",
+    note: "Mạnh nhất, chậm và tốn hơn",
+  },
+];
+
+const AGENT_LANGUAGE_LABELS: Record<AgentLanguage, string> = {
+  vi: "Tiếng Việt",
+  zh: "中文",
+  en: "English",
+};
+
 const COLOR_PRESETS = [
   "#1C78E8",
   "#148C7B",
   "#D85A43",
   "#C94F78",
   "#7759C7",
+] as const;
+
+const FULL_COLOR_PALETTE = [
+  "#EF4444",
+  "#F97316",
+  "#F59E0B",
+  "#EAB308",
+  "#84CC16",
+  "#22C55E",
+  "#10B981",
+  "#14B8A6",
+  "#06B6D4",
+  "#0EA5E9",
+  "#3B82F6",
+  "#1C78E8",
+  "#6366F1",
+  "#7759C7",
+  "#A855F7",
+  "#D946EF",
+  "#EC4899",
+  "#C94F78",
+  "#D85A43",
+  "#64748B",
+  "#475569",
+  "#374151",
+  "#78716C",
+  "#111827",
 ] as const;
 
 const TEXT_SIZE_OPTIONS: Array<{
@@ -162,12 +245,19 @@ export function SettingsModal({
   systemColorScheme,
   reduceMotion,
   settings,
+  agentSettings,
   history,
+  agentHistory,
   onThemeModeChanged,
   onSaveProfile,
   onSaveFrameColors,
   onSaveDisplay,
+  onSaveAgent,
   onClearHistory,
+  onClearAgentHistory,
+  onRestoreHistory,
+  onRestoreAgentHistory,
+  onOpenDiagnostics,
   onClose,
 }: SettingsModalProps) {
   const [route, setRoute] = useState<SettingsRoute>("root");
@@ -184,7 +274,12 @@ export function SettingsModal({
     ...settings.display,
     textColors: { ...settings.display.textColors },
   });
+  const [draftAgent, setDraftAgent] = useState<AgentSettings>({
+    ...agentSettings,
+  });
   const [openDropdown, setOpenDropdown] = useState<DropdownId>();
+  const [colorPickerLanguage, setColorPickerLanguage] =
+    useState<TranslationLanguage>();
   const [reveal, setReveal] = useState<{
     x: number;
     y: number;
@@ -203,8 +298,10 @@ export function SettingsModal({
       ...settings.display,
       textColors: { ...settings.display.textColors },
     });
+    setDraftAgent({ ...agentSettings });
     setOpenDropdown(undefined);
-  }, [settings, visible]);
+    setColorPickerLanguage(undefined);
+  }, [agentSettings, settings, visible]);
 
   useEffect(
     () => () => {
@@ -222,6 +319,7 @@ export function SettingsModal({
 
   const openColors = () => {
     setDraftColors({ ...settings.frameColors });
+    setColorPickerLanguage(undefined);
     setRoute("colors");
   };
 
@@ -231,6 +329,18 @@ export function SettingsModal({
       textColors: { ...settings.display.textColors },
     });
     setRoute("typography");
+  };
+
+  const openAgent = () => {
+    setDraftAgent({ ...agentSettings });
+    setOpenDropdown(undefined);
+    setRoute("agent");
+  };
+
+  const saveAgent = () => {
+    onSaveAgent({ ...draftAgent, prompt: draftAgent.prompt.trim() });
+    setOpenDropdown(undefined);
+    setRoute("root");
   };
 
   const saveProfile = () => {
@@ -313,14 +423,24 @@ export function SettingsModal({
           ? "Màu khung"
           : route === "typography"
             ? "Hiển thị bản dịch"
-            : "Lịch sử";
+            : route === "agent"
+              ? "Trợ lý EAgent"
+              : route === "translationHistory"
+                ? "Lịch sử dịch"
+                : "Lịch sử Agent";
 
   return (
     <Modal
       animationType="slide"
       presentationStyle="pageSheet"
       visible={visible}
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        if (colorPickerLanguage) {
+          setColorPickerLanguage(undefined);
+        } else {
+          onClose();
+        }
+      }}
     >
       <SafeAreaView
         style={[styles.safeArea, { backgroundColor: theme.background }]}
@@ -334,6 +454,7 @@ export function SettingsModal({
               accessibilityRole="button"
               onPress={() => {
                 setOpenDropdown(undefined);
+                setColorPickerLanguage(undefined);
                 setRoute("root");
               }}
               hitSlop={8}
@@ -381,11 +502,16 @@ export function SettingsModal({
               themeMode={themeMode}
               settings={settings}
               onThemeChanged={changeTheme}
+              agentSettings={agentSettings}
               onOpenProfile={openProfile}
               onOpenColors={openColors}
               onOpenTypography={openTypography}
-              onOpenHistory={() => setRoute("history")}
+              onOpenAgent={openAgent}
+              onOpenTranslationHistory={() => setRoute("translationHistory")}
+              onOpenAgentHistory={() => setRoute("agentHistory")}
+              onOpenDiagnostics={onOpenDiagnostics}
               historyCount={history.length}
+              agentHistoryCount={agentHistory.filter((message) => message.role === "user").length}
             />
           ) : route === "profile" ? (
             <ProfileSettings
@@ -409,6 +535,7 @@ export function SettingsModal({
                   [language]: color,
                 }))
               }
+              onOpenPalette={setColorPickerLanguage}
               onSave={saveColors}
             />
           ) : route === "typography" ? (
@@ -420,14 +547,48 @@ export function SettingsModal({
               onDisplayChanged={setDraftDisplay}
               onSave={saveDisplay}
             />
-          ) : (
+          ) : route === "agent" ? (
+            <AgentSettingsView
+              theme={theme}
+              settings={draftAgent}
+              openDropdown={openDropdown}
+              onDropdownChanged={setOpenDropdown}
+              onSettingsChanged={setDraftAgent}
+              onSave={saveAgent}
+            />
+          ) : route === "translationHistory" ? (
             <HistorySettings
               theme={theme}
               history={history}
               onClear={onClearHistory}
+              onRestore={onRestoreHistory}
+            />
+          ) : (
+            <AgentHistorySettings
+              theme={theme}
+              history={agentHistory}
+              onClear={onClearAgentHistory}
+              onRestore={onRestoreAgentHistory}
             />
           )}
         </KeyboardAvoidingView>
+
+        {route === "colors" && colorPickerLanguage ? (
+          <ColorPickerOverlay
+            key={colorPickerLanguage}
+            theme={theme}
+            language={colorPickerLanguage}
+            value={draftColors[colorPickerLanguage]}
+            onApply={(color) => {
+              setDraftColors((current) => ({
+                ...current,
+                [colorPickerLanguage]: color,
+              }));
+              setColorPickerLanguage(undefined);
+            }}
+            onClose={() => setColorPickerLanguage(undefined)}
+          />
+        ) : null}
 
         {reveal ? (
           <>
@@ -488,22 +649,32 @@ function RootSettings({
   theme,
   themeMode,
   settings,
+  agentSettings,
   onThemeChanged,
   onOpenProfile,
   onOpenColors,
   onOpenTypography,
-  onOpenHistory,
+  onOpenAgent,
+  onOpenTranslationHistory,
+  onOpenAgentHistory,
+  onOpenDiagnostics,
   historyCount,
+  agentHistoryCount,
 }: {
   theme: AppTheme;
   themeMode: ThemeMode;
   settings: TranslationSettings;
+  agentSettings: AgentSettings;
   onThemeChanged: (mode: ThemeMode, event: GestureResponderEvent) => void;
   onOpenProfile: (pair: LanguagePair) => void;
   onOpenColors: () => void;
   onOpenTypography: () => void;
-  onOpenHistory: () => void;
+  onOpenAgent: () => void;
+  onOpenTranslationHistory: () => void;
+  onOpenAgentHistory: () => void;
+  onOpenDiagnostics: () => void;
   historyCount: number;
+  agentHistoryCount: number;
 }) {
   const { counterpart } = languagesForPair(settings.activePair);
   return (
@@ -648,9 +819,33 @@ function RootSettings({
       </View>
 
       <View style={styles.section}>
+        <SectionTitle icon="support-agent" title="Trợ lý EAgent" theme={theme} />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Chọn ngôn ngữ trò chuyện, model, suy luận và tìm kiếm web.
+        </Text>
+        <View style={styles.options}>
+          <NavigationRow
+            theme={theme}
+            title={`Trò chuyện bằng ${AGENT_LANGUAGE_LABELS[agentSettings.language]}`}
+            note={`${agentModelLabel(agentSettings.model)} • ${
+              agentSettings.reasoning ? "Suy luận sâu" : "Trả lời nhanh"
+            } • ${agentSettings.search ? "Có tìm web" : "Không tìm web"}`}
+            onPress={onOpenAgent}
+            leading={
+              <MaterialIcons
+                name="support-agent"
+                size={25}
+                color={theme.accent}
+              />
+            }
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
         <SectionTitle icon="history" title="Lịch sử" theme={theme} />
         <Text style={[styles.helper, { color: theme.muted }]}>
-          Xem lại các bản dịch bằng giọng nói và hình ảnh.
+          Xem riêng lịch sử phiên dịch và trò chuyện EAgent.
         </Text>
         <View style={styles.options}>
           <NavigationRow
@@ -661,9 +856,44 @@ function RootSettings({
                 ? `${historyCount} bản dịch gần đây`
                 : "Chưa có bản dịch nào"
             }
-            onPress={onOpenHistory}
+            onPress={onOpenTranslationHistory}
             leading={
-              <MaterialIcons name="history" size={25} color={theme.accent} />
+              <MaterialIcons name="translate" size={25} color={theme.accent} />
+            }
+          />
+          <NavigationRow
+            theme={theme}
+            title="Lịch sử Agent"
+            note={
+              agentHistoryCount > 0
+                ? `${agentHistoryCount} lượt trò chuyện gần đây`
+                : "Chưa có cuộc trò chuyện nào"
+            }
+            onPress={onOpenAgentHistory}
+            leading={
+              <MaterialIcons
+                name="support-agent"
+                size={25}
+                color={theme.accent}
+              />
+            }
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <SectionTitle icon="monitor-heart" title="Chẩn đoán" theme={theme} />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Xem độ trễ kết nối và model đang chạy.
+        </Text>
+        <View style={styles.options}>
+          <NavigationRow
+            theme={theme}
+            title="Thông số kỹ thuật"
+            note="Kết nối, độ trễ, bộ đệm âm thanh"
+            onPress={onOpenDiagnostics}
+            leading={
+              <MaterialIcons name="speed" size={25} color={theme.accent} />
             }
           />
         </View>
@@ -780,12 +1010,241 @@ function ProfileSettings({
   );
 }
 
+function AgentSettingsView({
+  theme,
+  settings,
+  openDropdown,
+  onDropdownChanged,
+  onSettingsChanged,
+  onSave,
+}: {
+  theme: AppTheme;
+  settings: AgentSettings;
+  openDropdown: DropdownId | undefined;
+  onDropdownChanged: (id: DropdownId | undefined) => void;
+  onSettingsChanged: (settings: AgentSettings) => void;
+  onSave: () => void;
+}) {
+  return (
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      <View
+        style={[
+          styles.profileIntro,
+          {
+            backgroundColor: `${theme.accent}12`,
+            borderColor: `${theme.accent}55`,
+          },
+        ]}
+      >
+        <MaterialIcons name="support-agent" size={22} color={theme.accent} />
+        <View style={styles.profileIntroCopy}>
+          <Text style={[styles.profileIntroTitle, { color: theme.text }]}>
+            EAgent
+          </Text>
+          <Text style={[styles.profileIntroNote, { color: theme.muted }]}>
+            Ngôn ngữ mặc định quyết định cả cách quả cầu rơi vào khung chat.
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Ngôn ngữ mặc định" />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Tiếng Việt: quả cầu rơi thẳng xuống. Ngôn ngữ khác: quả cầu bay lên
+          rồi mới rơi xuống.
+        </Text>
+        <View
+          accessibilityRole="radiogroup"
+          style={[
+            styles.themePicker,
+            { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+          ]}
+        >
+          {AGENT_LANGUAGES.map((language) => {
+            const selected = language === settings.language;
+            return (
+              <Pressable
+                key={language}
+                accessibilityLabel={`Trò chuyện bằng ${AGENT_LANGUAGE_LABELS[language]}`}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                onPress={() => onSettingsChanged({ ...settings, language })}
+                style={({ pressed }) => [
+                  styles.themeChoice,
+                  {
+                    backgroundColor: selected
+                      ? `${theme.accent}1F`
+                      : "transparent",
+                    opacity: pressed ? 0.64 : 1,
+                  },
+                ]}
+              >
+                <MaterialIcons
+                  name={language === "vi" ? "south" : "swap-vert"}
+                  size={19}
+                  color={selected ? theme.accent : theme.muted}
+                />
+                <Text
+                  style={[
+                    styles.themeChoiceText,
+                    { color: selected ? theme.accent : theme.muted },
+                  ]}
+                >
+                  {AGENT_LANGUAGE_LABELS[language]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Model trợ lý" />
+        <DropdownField
+          theme={theme}
+          value={settings.model}
+          options={AGENT_MODEL_OPTIONS}
+          expanded={openDropdown === "agentModel"}
+          onToggle={() =>
+            onDropdownChanged(
+              openDropdown === "agentModel" ? undefined : "agentModel",
+            )
+          }
+          onSelect={(model) => {
+            onSettingsChanged({ ...settings, model });
+            onDropdownChanged(undefined);
+          }}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Cách trả lời" />
+        <View style={styles.options}>
+          <ToggleRow
+            theme={theme}
+            icon="psychology"
+            title="Suy luận trước khi trả lời"
+            note="Chậm hơn nhưng chắc chắn hơn với câu hỏi khó"
+            value={settings.reasoning}
+            onValueChange={(reasoning) =>
+              onSettingsChanged({ ...settings, reasoning })
+            }
+          />
+          <ToggleRow
+            theme={theme}
+            icon="travel-explore"
+            title="Tìm kiếm web"
+            note="Dùng Exa để tra thông tin mới, cần EXA_API_KEY trên máy chủ"
+            value={settings.search}
+            onValueChange={(search) =>
+              onSettingsChanged({ ...settings, search })
+            }
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <FieldLabel theme={theme} label="Lời nhắc hệ thống" />
+        <Text style={[styles.helper, { color: theme.muted }]}>
+          Không bắt buộc. Mô tả vai trò, văn phong hoặc cách xưng hô bạn muốn.
+        </Text>
+        <TextInput
+          accessibilityLabel="Lời nhắc hệ thống"
+          multiline
+          maxLength={MAX_AGENT_PROMPT_LENGTH}
+          value={settings.prompt}
+          onChangeText={(prompt) => onSettingsChanged({ ...settings, prompt })}
+          placeholder="Ví dụ: Bạn là trợ lý du lịch, trả lời ngắn gọn và gợi ý địa điểm gần tôi."
+          placeholderTextColor={theme.faint}
+          selectionColor={theme.accent}
+          textAlignVertical="top"
+          style={[
+            styles.promptInput,
+            {
+              backgroundColor: theme.surfaceRaised,
+              borderColor: theme.border,
+              color: theme.text,
+            },
+          ]}
+        />
+      </View>
+
+      <SaveButton theme={theme} onPress={onSave} />
+    </ScrollView>
+  );
+}
+
+function ToggleRow({
+  theme,
+  icon,
+  title,
+  note,
+  value,
+  onValueChange,
+}: {
+  theme: AppTheme;
+  icon: keyof typeof MaterialIcons.glyphMap;
+  title: string;
+  note: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+}) {
+  return (
+    <View
+      style={[
+        styles.navigationRow,
+        {
+          backgroundColor: value ? `${theme.accent}12` : theme.surfaceRaised,
+          borderColor: value ? theme.accent : theme.border,
+        },
+      ]}
+    >
+      <MaterialIcons
+        name={icon}
+        size={25}
+        color={value ? theme.accent : theme.muted}
+      />
+      <View style={styles.navigationCopy}>
+        <Text style={[styles.navigationTitle, { color: theme.text }]}>
+          {title}
+        </Text>
+        <Text
+          style={[
+            styles.navigationNote,
+            { color: value ? theme.accent : theme.muted },
+          ]}
+        >
+          {note}
+        </Text>
+      </View>
+      <Switch
+        accessibilityLabel={title}
+        value={value}
+        onValueChange={onValueChange}
+        thumbColor={value ? theme.accent : theme.surface}
+        trackColor={{ false: theme.border, true: `${theme.accent}66` }}
+      />
+    </View>
+  );
+}
+
+function agentModelLabel(model: AgentModel): string {
+  return (
+    AGENT_MODEL_OPTIONS.find((option) => option.value === model)?.label ?? model
+  );
+}
+
 function ColorSettings({
   theme,
   languages,
   colors,
   valid,
   onColorChanged,
+  onOpenPalette,
   onSave,
 }: {
   theme: AppTheme;
@@ -793,6 +1252,7 @@ function ColorSettings({
   colors: Record<TranslationLanguage, string>;
   valid: boolean;
   onColorChanged: (language: TranslationLanguage, color: string) => void;
+  onOpenPalette: (language: TranslationLanguage) => void;
   onSave: () => void;
 }) {
   return (
@@ -819,12 +1279,36 @@ function ColorSettings({
             ]}
           >
             <View style={styles.colorCardHeader}>
-              <View
-                style={[
-                  styles.colorPreview,
-                  { backgroundColor: inputValid ? color : theme.border },
+              <Pressable
+                accessibilityLabel={`Mở bảng màu ${LANGUAGE_META[language].label}`}
+                accessibilityRole="button"
+                hitSlop={6}
+                onPress={() => onOpenPalette(language)}
+                style={({ pressed }) => [
+                  styles.colorPreviewButton,
+                  {
+                    backgroundColor: theme.background,
+                    borderColor: theme.border,
+                    opacity: pressed ? 0.66 : 1,
+                    transform: [{ scale: pressed ? 0.94 : 1 }],
+                  },
                 ]}
-              />
+              >
+                <View
+                  style={[
+                    styles.colorPreview,
+                    { backgroundColor: inputValid ? color : theme.border },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.colorPreviewBadge,
+                    { backgroundColor: theme.surfaceRaised },
+                  ]}
+                >
+                  <MaterialIcons name="palette" size={11} color={theme.text} />
+                </View>
+              </Pressable>
               <View style={styles.colorCardCopy}>
                 <Text style={[styles.colorTitle, { color: theme.text }]}>
                   {LANGUAGE_META[language].label}
@@ -894,6 +1378,199 @@ function ColorSettings({
       ) : null}
       <SaveButton theme={theme} onPress={onSave} disabled={!valid} />
     </ScrollView>
+  );
+}
+
+function ColorPickerOverlay({
+  theme,
+  language,
+  value,
+  onApply,
+  onClose,
+}: {
+  theme: AppTheme;
+  language: TranslationLanguage;
+  value: string;
+  onApply: (color: string) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(
+    isValidHexColor(value) ? normalizeHexColor(value) : "",
+  );
+  const valid = isValidHexColor(normalizeHexColor(draft));
+  const normalizedDraft = valid ? normalizeHexColor(draft) : undefined;
+
+  return (
+    <View style={styles.colorPickerOverlay}>
+      <Pressable
+        accessibilityLabel="Đóng bảng màu"
+        accessibilityRole="button"
+        onPress={onClose}
+        style={styles.colorPickerBackdrop}
+      />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        pointerEvents="box-none"
+        style={styles.colorPickerKeyboard}
+      >
+        <View
+          accessibilityViewIsModal
+          style={[
+            styles.colorPickerSheet,
+            {
+              backgroundColor: theme.surfaceRaised,
+              borderColor: theme.border,
+              shadowColor: theme.shadow,
+            },
+          ]}
+        >
+          <View style={styles.colorPickerHeader}>
+            <View style={styles.colorPickerHeaderCopy}>
+              <Text style={[styles.colorPickerTitle, { color: theme.text }]}>
+                Bảng màu
+              </Text>
+              <Text style={[styles.colorPickerNote, { color: theme.muted }]}>
+                Chọn màu cho {LANGUAGE_META[language].label}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityLabel="Đóng bảng màu"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={onClose}
+              style={({ pressed }) => [
+                styles.colorPickerClose,
+                {
+                  backgroundColor: theme.background,
+                  opacity: pressed ? 0.62 : 1,
+                },
+              ]}
+            >
+              <MaterialIcons name="close" size={21} color={theme.text} />
+            </Pressable>
+          </View>
+
+          <View style={styles.fullPalette} accessibilityRole="radiogroup">
+            {FULL_COLOR_PALETTE.map((color) => {
+              const selected = normalizedDraft === color;
+              return (
+                <Pressable
+                  key={color}
+                  accessibilityLabel={`Chọn màu ${color}`}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  onPress={() => setDraft(color)}
+                  style={({ pressed }) => [
+                    styles.fullSwatchTouch,
+                    { opacity: pressed ? 0.58 : 1 },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.fullSwatch,
+                      {
+                        backgroundColor: color,
+                        borderColor: selected ? theme.text : `${theme.text}18`,
+                        transform: [{ scale: selected ? 1.08 : 1 }],
+                      },
+                    ]}
+                  >
+                    {selected ? (
+                      <MaterialIcons
+                        name="check"
+                        size={19}
+                        color={contrastTextForColor(color)}
+                      />
+                    ) : null}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.colorPickerFieldLabel, { color: theme.text }]}>
+            Mã màu tùy chỉnh
+          </Text>
+          <View style={styles.colorPickerInputRow}>
+            <View
+              style={[
+                styles.colorPickerCurrent,
+                {
+                  backgroundColor: normalizedDraft ?? theme.border,
+                  borderColor: theme.border,
+                },
+              ]}
+            />
+            <TextInput
+              accessibilityLabel={`Mã màu tùy chỉnh ${LANGUAGE_META[language].label}`}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={7}
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="#RRGGBB"
+              placeholderTextColor={theme.faint}
+              selectionColor={theme.accent}
+              style={[
+                styles.colorPickerInput,
+                {
+                  backgroundColor: theme.background,
+                  borderColor: valid ? theme.border : theme.danger,
+                  color: theme.text,
+                },
+              ]}
+            />
+          </View>
+
+          <View style={styles.colorPickerActions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onClose}
+              style={({ pressed }) => [
+                styles.colorPickerAction,
+                {
+                  backgroundColor: theme.background,
+                  borderColor: theme.border,
+                  opacity: pressed ? 0.66 : 1,
+                },
+              ]}
+            >
+              <Text style={[styles.colorPickerCancelText, { color: theme.text }]}>
+                Hủy
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !valid }}
+              disabled={!valid}
+              onPress={() => normalizedDraft && onApply(normalizedDraft)}
+              style={({ pressed }) => [
+                styles.colorPickerAction,
+                {
+                  backgroundColor: valid ? theme.accent : theme.border,
+                  borderColor: valid ? theme.accent : theme.border,
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              <MaterialIcons
+                name="check"
+                size={19}
+                color={theme.accentText}
+              />
+              <Text
+                style={[
+                  styles.colorPickerApplyText,
+                  { color: theme.accentText },
+                ]}
+              >
+                Áp dụng
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -1145,10 +1822,12 @@ function HistorySettings({
   theme,
   history,
   onClear,
+  onRestore,
 }: {
   theme: AppTheme;
   history: TranslationHistoryEntry[];
   onClear: () => void;
+  onRestore: (entry: TranslationHistoryEntry) => void;
 }) {
   const confirmClear = () => {
     Alert.alert(
@@ -1186,7 +1865,7 @@ function HistorySettings({
       ) : (
         <>
           <Text style={[styles.historyIntro, { color: theme.muted }]}>
-            {history.length} bản dịch gần nhất được lưu trên thiết bị.
+            {history.length} bản dịch gần nhất. Chạm một mục để nạp lại.
           </Text>
           <View
             style={[
@@ -1195,14 +1874,18 @@ function HistorySettings({
             ]}
           >
             {history.map((entry, index) => (
-              <View
+              <Pressable
                 key={entry.id}
-                style={[
+                accessibilityLabel={`Nạp lại bản dịch ${entry.sourceText}`}
+                accessibilityRole="button"
+                onPress={() => onRestore(entry)}
+                style={({ pressed }) => [
                   styles.historyItem,
                   index > 0 && {
                     borderTopWidth: StyleSheet.hairlineWidth,
                     borderTopColor: theme.border,
                   },
+                  { opacity: pressed ? 0.62 : 1 },
                 ]}
               >
                 <View style={styles.historyMetaRow}>
@@ -1244,7 +1927,15 @@ function HistorySettings({
                 >
                   {entry.translatedText}
                 </Text>
-              </View>
+                <View style={styles.historyRestoreRow}>
+                  <MaterialIcons name="replay" size={16} color={theme.accent} />
+                  <Text
+                    style={[styles.historyRestoreText, { color: theme.accent }]}
+                  >
+                    Nạp lại bản dịch
+                  </Text>
+                </View>
+              </Pressable>
             ))}
           </View>
           <Pressable
@@ -1267,6 +1958,195 @@ function HistorySettings({
       )}
     </ScrollView>
   );
+}
+
+function AgentHistorySettings({
+  theme,
+  history,
+  onClear,
+  onRestore,
+}: {
+  theme: AppTheme;
+  history: AgentChatMessage[];
+  onClear: () => void;
+  onRestore: () => void;
+}) {
+  const visibleHistory = history.filter(
+    (message) => message.text.trim() || message.imageDataUrl || message.imageUri,
+  );
+  const turnCount = visibleHistory.filter(
+    (message) => message.role === "user",
+  ).length;
+  const confirmClear = () => {
+    Alert.alert(
+      "Xóa lịch sử Agent?",
+      "Các cuộc trò chuyện EAgent đã lưu trên thiết bị sẽ bị xóa.",
+      [
+        { text: "Hủy", style: "cancel" },
+        { text: "Xóa", style: "destructive", onPress: onClear },
+      ],
+    );
+  };
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      {visibleHistory.length === 0 ? (
+        <View style={styles.historyEmpty}>
+          <View
+            style={[
+              styles.historyEmptyIcon,
+              { backgroundColor: `${theme.accent}16` },
+            ]}
+          >
+            <MaterialIcons
+              name="support-agent"
+              size={31}
+              color={theme.accent}
+            />
+          </View>
+          <Text style={[styles.historyEmptyTitle, { color: theme.text }]}>
+            Chưa có lịch sử Agent
+          </Text>
+          <Text style={[styles.historyEmptyNote, { color: theme.muted }]}>
+            Các câu hỏi và trả lời của EAgent sẽ tự động xuất hiện ở đây.
+          </Text>
+        </View>
+      ) : (
+        <>
+          <Text style={[styles.historyIntro, { color: theme.muted }]}>
+            {turnCount} lượt trò chuyện gần nhất được lưu trên thiết bị.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onRestore}
+            style={({ pressed }) => [
+              styles.restoreAgentButton,
+              {
+                backgroundColor: `${theme.accent}16`,
+                borderColor: `${theme.accent}45`,
+                opacity: pressed ? 0.66 : 1,
+              },
+            ]}
+          >
+            <MaterialIcons name="replay" size={20} color={theme.accent} />
+            <Text
+              style={[styles.restoreAgentText, { color: theme.accent }]}
+            >
+              Mở lại cuộc trò chuyện
+            </Text>
+          </Pressable>
+          <View
+            style={[
+              styles.historyList,
+              { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+            ]}
+          >
+            {visibleHistory.map((message, index) => {
+              const isUser = message.role === "user";
+              return (
+                <View
+                  key={message.id}
+                  style={[
+                    styles.historyItem,
+                    index > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: theme.border,
+                    },
+                  ]}
+                >
+                  <View style={styles.historyMetaRow}>
+                    <View style={styles.historyKindRow}>
+                      <MaterialIcons
+                        name={isUser ? "person-outline" : "support-agent"}
+                        size={17}
+                        color={
+                          message.status === "error"
+                            ? theme.danger
+                            : theme.accent
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.historyMeta,
+                          {
+                            color:
+                              message.status === "error"
+                                ? theme.danger
+                                : theme.accent,
+                          },
+                        ]}
+                      >
+                        {isUser ? "Bạn" : "EAgent"}
+                      </Text>
+                    </View>
+                    <Text style={[styles.historyDate, { color: theme.faint }]}>
+                      {formatHistoryDate(message.createdAt)}
+                    </Text>
+                  </View>
+                  <Text
+                    numberOfLines={6}
+                    style={[
+                      styles.agentHistoryText,
+                      {
+                        color:
+                          message.status === "error"
+                            ? theme.danger
+                            : theme.text,
+                      },
+                    ]}
+                  >
+                    {message.text.trim() || "[Ảnh]"}
+                  </Text>
+                  {message.sources?.length ? (
+                    <View style={styles.agentHistorySources}>
+                      <MaterialIcons
+                        name="link"
+                        size={15}
+                        color={theme.muted}
+                      />
+                      <Text
+                        style={[styles.agentHistorySourceText, { color: theme.muted }]}
+                      >
+                        {message.sources.length} nguồn tham khảo
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={confirmClear}
+            style={({ pressed }) => [
+              styles.clearHistoryButton,
+              {
+                backgroundColor: theme.dangerSurface,
+                opacity: pressed ? 0.68 : 1,
+              },
+            ]}
+          >
+            <MaterialIcons name="delete-outline" size={20} color={theme.danger} />
+            <Text style={[styles.clearHistoryText, { color: theme.danger }]}>
+              Xóa lịch sử Agent
+            </Text>
+          </Pressable>
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function contrastTextForColor(color: string): "#111827" | "#FFFFFF" {
+  const normalized = normalizeHexColor(color).slice(1);
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  const luminance = (red * 299 + green * 587 + blue * 114) / 1_000;
+  return luminance > 156 ? "#111827" : "#FFFFFF";
 }
 
 function normalizeTextColor(color: TranslationTextColor): TranslationTextColor {
@@ -1636,7 +2516,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 11,
   },
-  colorPreview: { width: 34, height: 34, borderRadius: 10 },
+  colorPreviewButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  colorPreview: { width: 34, height: 34, borderRadius: 9 },
+  colorPreviewBadge: {
+    position: "absolute",
+    right: -4,
+    bottom: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   colorCardCopy: { flex: 1 },
   colorTitle: { fontSize: 14, lineHeight: 20, fontWeight: "700" },
   colorNative: { fontSize: 12, lineHeight: 17 },
@@ -1672,6 +2570,116 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  colorPickerOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 45,
+  },
+  colorPickerBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: "rgba(12, 14, 13, 0.56)",
+  },
+  colorPickerKeyboard: { flex: 1, justifyContent: "flex-end" },
+  colorPickerSheet: {
+    width: "100%",
+    paddingHorizontal: 18,
+    paddingTop: 17,
+    paddingBottom: 20,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 24,
+  },
+  colorPickerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  colorPickerHeaderCopy: { flex: 1 },
+  colorPickerTitle: { fontSize: 19, lineHeight: 25, fontWeight: "800" },
+  colorPickerNote: { marginTop: 1, fontSize: 12, lineHeight: 17 },
+  colorPickerClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullPalette: {
+    marginTop: 14,
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  fullSwatchTouch: {
+    width: "16.6667%",
+    height: 50,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullSwatch: {
+    width: 37,
+    height: 37,
+    borderRadius: 19,
+    borderWidth: 2.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  colorPickerFieldLabel: {
+    marginTop: 12,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  colorPickerInputRow: {
+    marginTop: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  colorPickerCurrent: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  colorPickerInput: {
+    flex: 1,
+    minHeight: 46,
+    paddingHorizontal: 13,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
+  },
+  colorPickerActions: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
+  colorPickerAction: {
+    flex: 1,
+    minHeight: 49,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  colorPickerCancelText: { fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  colorPickerApplyText: { fontSize: 14, lineHeight: 20, fontWeight: "800" },
   validation: { marginTop: 12, fontSize: 13, lineHeight: 18 },
   textSizePicker: {
     minHeight: 82,
@@ -1771,6 +2779,37 @@ const styles = StyleSheet.create({
   historySource: { marginTop: 2, fontSize: 14, lineHeight: 20, fontWeight: "500" },
   historyTargetRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   historyTranslation: { marginTop: 2, fontSize: 16, lineHeight: 23, fontWeight: "700" },
+  historyRestoreRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  historyRestoreText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  restoreAgentButton: {
+    minHeight: 48,
+    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  restoreAgentText: { fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  agentHistoryText: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "500",
+  },
+  agentHistorySources: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  agentHistorySourceText: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
   clearHistoryButton: {
     minHeight: 50,
     marginTop: 16,

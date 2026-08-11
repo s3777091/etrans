@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { classifyQwenError } from "./errors";
 import {
   buildQwenProxyWebSocketUrl,
   createSessionUpdate,
@@ -62,5 +63,16 @@ describe("Qwen live adapter", () => {
       },
     });
     expect(parseHotwords("not-json")).toEqual({});
+  });
+
+  it("stops retrying when the realtime model is gone", () => {
+    // Qwen closes the session with 1007 "Model not exist." once a realtime
+    // model leaves the endpoint's catalog.
+    const retired = classifyQwenError("Model not exist.", 1007);
+    expect(retired.code).toBe("MODEL_UNAVAILABLE");
+    expect(retired.retryable).toBe(false);
+
+    expect(classifyQwenError("invalid api key").code).toBe("AUTH_UNAVAILABLE");
+    expect(classifyQwenError("socket hang up", 1006).code).toBe("NETWORK_ERROR");
   });
 });

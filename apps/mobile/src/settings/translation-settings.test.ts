@@ -42,7 +42,7 @@ describe("translation settings", () => {
 
     expect(parsed.activePair).toBe("vi-en");
     expect(parsed.profiles["vi-en"].prompt).toBe("Keep product names");
-    expect(parsed.profiles["vi-en"].textModel).toBe("qwen-mt-flash");
+    expect(parsed.profiles["vi-en"].textModel).toBe("qwen3.6-flash");
     expect(parsed.frameColors.vi).toBe("#AABBCC");
     expect(parsed.frameColors.en).toBe(
       DEFAULT_TRANSLATION_SETTINGS.frameColors.en,

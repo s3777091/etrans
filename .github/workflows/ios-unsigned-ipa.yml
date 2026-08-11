@@ -1,0 +1,183 @@
+# Build .ipa iOS KHÔNG ký, chạy trên macOS runner của GitHub.
+#
+# VÌ SAO CÓ FILE NÀY
+# ------------------
+# Cài app native lên iPhone thật cần một bản build iOS, mà build iOS cần macOS.
+# Không có Mac ở nhà thì mượn Mac của GitHub Actions (`runs-on: macos-26`).
+# Ta cố tình build KHÔNG ký (CODE_SIGNING_ALLOWED=NO) để khỏi cần certificate
+# của Apple Developer Program ($99/năm). Việc ký để lại cho Sideloadly/AltStore
+# ở máy Windows, dùng Apple ID FREE — chữ ký kiểu đó sống 7 ngày, hết hạn thì
+# ký lại, nhưng không tốn đồng nào.
+#
+# Repo đang public nên phút macOS miễn phí không giới hạn. Nếu sau này chuyển
+# sang private thì phút macOS bị tính x10 (2000 phút free ~ 200 phút macOS ~
+# 8-12 lần build/tháng), lúc đó nên bỏ trigger `push` và chỉ bấm tay.
+#
+# Chạy: tab Actions -> "iOS unsigned IPA" -> Run workflow. Xong tải artifact
+# `etrans-ios-unsigned-<sha>` ở cuối trang run.
+
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: 'Địa chỉ máy chủ backend nhúng vào bản build (bỏ trống thì lấy biến repo EXPO_PUBLIC_API_BASE_URL)'
+        required: false
+        type: string
+  push:
+    branches: [main]
+    paths-ignore:
+      # Sửa tài liệu thì không cần .ipa mới.
+      - '**/*.md'
+      - '.gitignore'
+      - '.vscode/**'
+      # Backend chạy trên máy chủ, không nằm trong bundle của app.
+      - 'apps/backend/**'
+
+# Push liên tiếp thì chỉ giữ lần cuối — mỗi run bị huỷ sớm là ~50 phút quota
+# không bị đốt. Build cũ đằng nào cũng lỗi thời ngay khi có commit mới.
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Thoát nhanh cho commit không đáng build: ghi [skip ipa] trong message.
+    #
+    # BẪY: điều kiện này quét toàn bộ message, kể cả phần thân. Commit nào NHẮC
+    # TỚI chuỗi đó — ví dụ commit tài liệu hoá chính cái cờ này — cũng bị bỏ qua.
+    # Muốn nói về nó trong message thì viết tách ra, đừng viết liền nguyên chuỗi.
+    #
+    # workflow_dispatch không có head_commit; contains(null, …) = false nên
+    # bấm tay luôn chạy, không bao giờ bị cờ này chặn.
+    if: "!contains(github.event.head_commit.message, '[skip ipa]')"
+    # macos-15 mang Xcode Swift 6.1, mà ExpoModulesJSI của SDK 57 đòi Swift
+    # tools 6.2 (Xcode 26) — build sẽ chết ở "Could not resolve package
+    # dependencies". Dùng image mới hơn.
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    env:
+      # App đọc process.env.EXPO_PUBLIC_API_BASE_URL, và babel-preset-expo NỘI
+      # SUY giá trị này thẳng vào bundle lúc đóng gói. Bundle được sinh ra ở
+      # BÊN TRONG bước xcodebuild (build phase "Bundle React Native code and
+      # images"), nên biến phải nằm ở cấp job chứ không phải một step riêng.
+      #
+      # Bỏ trống thì app rơi về http://localhost:8787 — trên iPhone thật đó là
+      # chính nó, nên sẽ không bao giờ kết nối được máy chủ.
+      EXPO_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url || vars.EXPO_PUBLIC_API_BASE_URL }}
+      # Bảng thuật ngữ chuyên ngành theo từng chiều dịch. Không đặt thì
+      # live-adapter tự dùng {}.
+      EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI: ${{ vars.EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI }}
+      EXPO_PUBLIC_QWEN_HOTWORDS_VI_TO_ZH: ${{ vars.EXPO_PUBLIC_QWEN_HOTWORDS_VI_TO_ZH }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # EXPO_PUBLIC_* bị nhúng thẳng vào bundle ai cũng đọc được, nên chỉ dùng
+      # cho địa chỉ máy chủ. DASHSCOPE_API_KEY phải nằm ở backend, tuyệt đối
+      # không đưa vào đây.
+      - name: Kiểm tra địa chỉ máy chủ
+        run: |
+          if [ -z "$EXPO_PUBLIC_API_BASE_URL" ]; then
+            echo "::warning::Chưa đặt EXPO_PUBLIC_API_BASE_URL. Bản .ipa sẽ trỏ về http://localhost:8787 và không kết nối được máy chủ. Đặt ở Settings -> Secrets and variables -> Actions -> Variables, hoặc nhập khi bấm Run workflow."
+          else
+            echo "Máy chủ: $EXPO_PUBLIC_API_BASE_URL"
+          fi
+
+      # Image có thể cài sẵn nhiều bản Xcode; chọn bản cao nhất thay vì tin vào
+      # mặc định, để lần sau image đổi cũng không gãy.
+      - name: Chọn Xcode mới nhất
+        run: |
+          ls -d /Applications/Xcode*.app
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Dùng: $LATEST"
+          sudo xcode-select -s "$LATEST/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Đây là monorepo npm workspaces: package-lock.json chỉ có ở gốc, nên
+      # `npm ci` phải chạy ở gốc chứ không phải trong apps/mobile.
+      #
+      # Bước này cũng chạy postinstall = patch-package. Đừng bỏ qua: patch
+      # expo-audio+57.0.3 có PHẦN iOS (AudioStream.swift đổi sang
+      # .playAndRecord/.voiceChat và bật voice processing). Prebuild trước khi
+      # vá thì bản .ipa mất khử vọng, nghe lại chính giọng mình.
+      - name: Cài dependency
+        run: npm ci
+
+      # Thư mục ios/ nằm trong .gitignore nên phải sinh lại mỗi lần build.
+      # --no-install để tự chạy pod install ở bước sau cho dễ đọc log.
+      - name: Prebuild iOS
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Cài CocoaPods
+        working-directory: apps/mobile/ios
+        run: pod install --repo-update
+
+      # Scheme phải lấy từ .xcodeproj CỦA APP, không phải từ workspace: danh
+      # sách scheme của workspace gộp cả scheme của Pods, và phần tử [0] của nó
+      # là một pod (EXConstants) — build cái đó thì ra framework chứ không ra
+      # .app, nên bước đóng gói chết mà bước build vẫn báo thành công.
+      - name: Dò workspace + scheme
+        id: xc
+        working-directory: apps/mobile/ios
+        run: |
+          WS=$(ls -d *.xcworkspace | head -1)
+          PROJ=$(ls -d *.xcodeproj | head -1)
+          SCHEME=$(xcodebuild -project "$PROJ" -list -json \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).project.schemes[0]))")
+          echo "workspace=$WS" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME"  >> "$GITHUB_OUTPUT"
+          echo "Workspace: $WS | Project: $PROJ | Scheme: $SCHEME"
+
+      - name: Build .app không ký
+        working-directory: apps/mobile/ios
+        run: |
+          xcodebuild \
+            -workspace "${{ steps.xc.outputs.workspace }}" \
+            -scheme "${{ steps.xc.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      # .ipa chỉ là file zip có thư mục Payload/ ở gốc. Tự đóng gói vì
+      # `xcodebuild -exportArchive` bắt buộc phải có provisioning profile.
+      #
+      # Dò .app thay vì ghi cứng Build/Products/Release-iphoneos — vị trí đó
+      # thay đổi theo cấu hình, và đoán sai thì bước này chết dù build đã xong.
+      - name: Đóng gói thành .ipa
+        run: |
+          APP=$(find apps/mobile/ios/build -type d -name "*.app" \
+                  -not -path "*/Index.noindex/*" \
+                  -not -path "*.app/*" | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::Không tìm thấy .app trong apps/mobile/ios/build"
+            find apps/mobile/ios/build -maxdepth 5 -type d | head -60
+            exit 1
+          fi
+          echo "Tìm thấy: $APP"
+          rm -rf /tmp/pkg && mkdir -p /tmp/pkg/Payload
+          cp -R "$APP" /tmp/pkg/Payload/
+          (cd /tmp/pkg && zip -qry "$GITHUB_WORKSPACE/etrans-unsigned.ipa" Payload)
+          ls -lh "$GITHUB_WORKSPACE/etrans-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # Kèm mã commit để phân biệt các bản build khi tải nhiều lần.
+          name: etrans-ios-unsigned-${{ github.sha }}
+          path: etrans-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

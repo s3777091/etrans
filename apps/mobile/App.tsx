@@ -31,8 +31,13 @@ import { appendTranscript } from "./src/interpreter/transcript";
 import {
   addTranslationHistoryEntry,
   parseTranslationHistory,
+  translationHistoryDisplayTexts,
   type TranslationHistoryEntry,
 } from "./src/history/translation-history";
+import {
+  parseAgentHistory,
+  serializeAgentHistory,
+} from "./src/history/agent-history";
 import {
   translateCapturedPhoto,
   type ImageTranslationResult,
@@ -43,6 +48,12 @@ import {
   type QwenLiveError,
   type TranslationLanguage,
 } from "./src/qwen/types";
+import type { AgentChatMessage } from "./src/agent/agent-client";
+import {
+  DEFAULT_AGENT_SETTINGS,
+  parseAgentSettings,
+  type AgentSettings,
+} from "./src/settings/agent-settings";
 import {
   DEFAULT_TRANSLATION_SETTINGS,
   directionsForPair,
@@ -57,6 +68,7 @@ import {
   CameraCaptureModal,
   type CapturedPhoto,
 } from "./src/ui/CameraCaptureModal";
+import { AgentScreen } from "./src/ui/AgentScreen";
 import { DeveloperModal } from "./src/ui/DeveloperModal";
 import { GestureOrb } from "./src/ui/GestureOrb";
 import { AppSplash, ETRANS_ICONS } from "./src/ui/AppSplash";
@@ -64,6 +76,8 @@ import { SettingsModal } from "./src/ui/SettingsModal";
 import { TranscriptPanel } from "./src/ui/TranscriptPanel";
 import { darkTheme, lightTheme } from "./src/ui/theme";
 import { resolveThemeMode, type ThemeMode } from "./src/ui/theme-mode";
+
+type AppMode = "translate" | "agent";
 
 type AppPhase =
   | "connecting"
@@ -85,6 +99,8 @@ const DEFAULT_METRICS: InterpreterMetrics = {
 const THEME_MODE_STORAGE_KEY = "interpreter.theme-mode";
 const TRANSLATION_SETTINGS_STORAGE_KEY = "interpreter.translation-settings";
 const TRANSLATION_HISTORY_STORAGE_KEY = "interpreter.translation-history";
+const AGENT_SETTINGS_STORAGE_KEY = "interpreter.agent-settings";
+const AGENT_HISTORY_STORAGE_KEY = "interpreter.agent-history";
 
 interface ETransIconNativeModule {
   setThemeMode: (
@@ -110,6 +126,7 @@ export default function App() {
   const pull = useRef(new Animated.Value(0)).current;
   const orbTravel = useRef(new Animated.Value(0)).current;
 
+  const [mode, setMode] = useState<AppMode>("translate");
   const [phase, setPhase] = useState<AppPhase>("connecting");
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [counterpartText, setCounterpartText] = useState("");
@@ -130,12 +147,20 @@ export default function App() {
   const [translationHistory, setTranslationHistory] = useState<
     TranslationHistoryEntry[]
   >([]);
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(
+    DEFAULT_AGENT_SETTINGS,
+  );
+  const [agentMessages, setAgentMessages] = useState<AgentChatMessage[]>([]);
   const [imageTranslation, setImageTranslation] =
     useState<ImageTranslationResult>();
   const [imageError, setImageError] = useState<string>();
   const [imageBusy, setImageBusy] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
   const cameraOpeningRef = useRef(false);
+  const cameraModeRef = useRef<AppMode>("translate");
+  const agentPhotoResolverRef = useRef<
+    ((photo: CapturedPhoto | undefined) => void) | undefined
+  >(undefined);
 
   const languagePair = translationSettings.activePair;
   const activeProfile = translationSettings.profiles[languagePair];
@@ -170,8 +195,11 @@ export default function App() {
       AsyncStorage.getItem(THEME_MODE_STORAGE_KEY),
       AsyncStorage.getItem(TRANSLATION_SETTINGS_STORAGE_KEY),
       AsyncStorage.getItem(TRANSLATION_HISTORY_STORAGE_KEY),
+      AsyncStorage.getItem(AGENT_SETTINGS_STORAGE_KEY),
+      AsyncStorage.getItem(AGENT_HISTORY_STORAGE_KEY),
     ])
-      .then(([savedMode, savedSettings, savedHistory]) => {
+      .then(
+        ([savedMode, savedSettings, savedHistory, savedAgent, savedAgentHistory]) => {
         if (!active) return;
         if (
           savedMode === "system" ||
@@ -182,7 +210,10 @@ export default function App() {
         }
         setTranslationSettings(parseTranslationSettings(savedSettings));
         setTranslationHistory(parseTranslationHistory(savedHistory));
-      })
+        setAgentSettings(parseAgentSettings(savedAgent));
+        setAgentMessages(parseAgentHistory(savedAgentHistory));
+      },
+      )
       .catch(() => undefined)
       .finally(() => {
         if (active) setThemeHydrated(true);
@@ -191,6 +222,17 @@ export default function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!themeHydrated) return;
+    const timer = setTimeout(() => {
+      void AsyncStorage.setItem(
+        AGENT_HISTORY_STORAGE_KEY,
+        serializeAgentHistory(agentMessages),
+      ).catch(() => undefined);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [agentMessages, themeHydrated]);
 
   useEffect(() => {
     if (!themeHydrated) return;
@@ -263,6 +305,14 @@ export default function App() {
     [persistTranslationSettings, translationSettings],
   );
 
+  const handleSaveAgent = useCallback((next: AgentSettings) => {
+    setAgentSettings(next);
+    void AsyncStorage.setItem(
+      AGENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify(next),
+    ).catch(() => undefined);
+  }, []);
+
   const addHistoryEntry = useCallback((entry: TranslationHistoryEntry) => {
     setTranslationHistory((current) => {
       const next = addTranslationHistoryEntry(current, entry);
@@ -281,11 +331,47 @@ export default function App() {
     );
   }, []);
 
+  const clearAgentHistory = useCallback(() => {
+    setAgentMessages([]);
+    void AsyncStorage.removeItem(AGENT_HISTORY_STORAGE_KEY).catch(
+      () => undefined,
+    );
+  }, []);
+
+  const restoreTranslationHistory = useCallback(
+    (entry: TranslationHistoryEntry) => {
+      const display = translationHistoryDisplayTexts(entry);
+      if (entry.pair !== translationSettings.activePair) {
+        persistTranslationSettings({
+          ...translationSettings,
+          activePair: entry.pair,
+        });
+      }
+      activeDirectionRef.current = undefined;
+      setCounterpartText(display.counterpartText);
+      setVietnameseText(display.vietnameseText);
+      counterpartTextRef.current = display.counterpartText;
+      vietnameseTextRef.current = display.vietnameseText;
+      setImageTranslation(undefined);
+      setImageError(undefined);
+      setDeveloperVisible(false);
+      setSettingsVisible(false);
+      setMode("translate");
+    },
+    [persistTranslationSettings, translationSettings],
+  );
+
   const handleAudioError = useCallback((value: unknown) => {
     const error = value as Partial<QwenLiveError>;
     if (error.code === "AUTH_UNAVAILABLE") {
       setFatalMessage(
         "Không thể kết nối Qwen. Hãy kiểm tra máy chủ, API key và số dư.",
+      );
+      setPhase("error");
+    } else if (error.code === "MODEL_UNAVAILABLE") {
+      // Retrying cannot bring a retired model back, so stop and say why.
+      setFatalMessage(
+        "Model phiên dịch trực tiếp không còn khả dụng trên endpoint đang dùng. Hãy đổi QWEN_LIVE_MODEL hoặc QWEN_BASE_URL trên máy chủ.",
       );
       setPhase("error");
     } else {
@@ -336,7 +422,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!permissionGranted) return;
+    if (!permissionGranted || mode !== "translate") return;
     let active = true;
     setPhase((current) => (current === "error" ? current : "connecting"));
     void engine
@@ -353,6 +439,7 @@ export default function App() {
     directions.right,
     engine,
     handleAudioError,
+    mode,
     permissionGranted,
   ]);
 
@@ -457,8 +544,49 @@ export default function App() {
     });
   }, [deactivateAudio]);
 
+  const restoreAgentHistory = useCallback(() => {
+    if (phase === "listening") release();
+    setDeveloperVisible(false);
+    setSettingsVisible(false);
+    setMode("agent");
+  }, [phase, release]);
+
+  const resolveAgentPhoto = useCallback((photo: CapturedPhoto | undefined) => {
+    const resolve = agentPhotoResolverRef.current;
+    agentPhotoResolverRef.current = undefined;
+    cameraModeRef.current = "translate";
+    setCameraVisible(false);
+    resolve?.(photo);
+  }, []);
+
+  const requestAgentPhoto = useCallback(async () => {
+    if (cameraVisible || cameraOpeningRef.current) return undefined;
+    cameraOpeningRef.current = true;
+    try {
+      const permission = await requestCameraPermission();
+      if (!permission.granted) {
+        throw new Error(
+          permission.canAskAgain
+            ? "Cần quyền truy cập camera để gửi ảnh cho trợ lý"
+            : "Quyền camera đang bị tắt. Hãy bật lại trong Cài đặt hệ thống.",
+        );
+      }
+      cameraModeRef.current = "agent";
+      setCameraVisible(true);
+      return await new Promise<CapturedPhoto | undefined>((resolve) => {
+        agentPhotoResolverRef.current = resolve;
+      });
+    } finally {
+      cameraOpeningRef.current = false;
+    }
+  }, [cameraVisible, requestCameraPermission]);
+
   const handleCameraCaptured = useCallback(
     async (photo: CapturedPhoto) => {
+      if (cameraModeRef.current === "agent") {
+        resolveAgentPhoto(photo);
+        return;
+      }
       setCameraVisible(false);
       setImageBusy(true);
       setImageTranslation(undefined);
@@ -511,14 +639,29 @@ export default function App() {
     [activeProfile, addHistoryEntry, apiBaseUrl, languagePair],
   );
 
-  const handleCameraError = useCallback((_message: string) => {
+  const handleCameraError = useCallback(
+    (_message: string) => {
+      if (cameraModeRef.current === "agent") {
+        resolveAgentPhoto(undefined);
+        return;
+      }
+      setCameraVisible(false);
+      setImageTranslation(undefined);
+      setImageError("Không thể mở camera lúc này");
+      void Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Error,
+      ).catch(() => undefined);
+    },
+    [resolveAgentPhoto],
+  );
+
+  const handleCameraCancel = useCallback(() => {
+    if (cameraModeRef.current === "agent") {
+      resolveAgentPhoto(undefined);
+      return;
+    }
     setCameraVisible(false);
-    setImageTranslation(undefined);
-    setImageError("Không thể mở camera lúc này");
-    void Haptics.notificationAsync(
-      Haptics.NotificationFeedbackType.Error,
-    ).catch(() => undefined);
-  }, []);
+  }, [resolveAgentPhoto]);
 
   const handleDoubleTap = useCallback(async () => {
     if (imageBusy || cameraVisible || cameraOpeningRef.current) return;
@@ -539,6 +682,7 @@ export default function App() {
       }
       setImageTranslation(undefined);
       setImageError(undefined);
+      cameraModeRef.current = "translate";
       setCameraVisible(true);
     } catch {
       handleCameraError("Không thể yêu cầu quyền truy cập camera");
@@ -591,7 +735,7 @@ export default function App() {
               accessibilityRole="header"
               style={[styles.brandName, { color: theme.text }]}
             >
-              ETrans
+              {mode === "agent" ? "EAgent" : "ETrans"}
             </Text>
           </View>
 
@@ -608,39 +752,54 @@ export default function App() {
             <Pressable
               accessibilityLabel="Dịch"
               accessibilityRole="tab"
-              accessibilityState={{ selected: true }}
+              accessibilityState={{ selected: mode === "translate" }}
               hitSlop={4}
               onPress={() => {
                 setDeveloperVisible(false);
                 setSettingsVisible(false);
+                setMode("translate");
               }}
               style={({ pressed }) => [
                 styles.headerTabButton,
-                styles.headerTabButtonActive,
+                mode === "translate" && styles.headerTabButtonActive,
                 {
-                  backgroundColor: theme.surfaceRaised,
+                  backgroundColor:
+                    mode === "translate" ? theme.surfaceRaised : "transparent",
                   shadowColor: theme.shadow,
                   opacity: pressed ? 0.72 : 1,
                   transform: [{ scale: pressed ? 0.96 : 1 }],
                 },
               ]}
             >
-              <MaterialIcons name="translate" size={22} color={theme.text} />
+              <MaterialIcons
+                name="translate"
+                size={22}
+                color={mode === "translate" ? theme.text : theme.muted}
+              />
             </Pressable>
 
             <Pressable
-              accessibilityLabel="Agent"
+              accessibilityLabel="Trợ lý EAgent"
               accessibilityRole="tab"
-              accessibilityState={{ selected: false }}
+              accessibilityState={{ selected: mode === "agent" }}
               hitSlop={4}
               onPress={() => {
                 setSettingsVisible(false);
-                setDeveloperVisible(true);
+                setDeveloperVisible(false);
+                // Switching away mid-gesture never terminates the pan
+                // responder, so close the interpreter turn by hand or the
+                // microphone stays open behind the agent screen.
+                if (phase === "listening") release();
+                setMode("agent");
               }}
               style={({ pressed }) => [
                 styles.headerTabButton,
+                mode === "agent" && styles.headerTabButtonActive,
                 {
-                  opacity: pressed ? 0.55 : 1,
+                  backgroundColor:
+                    mode === "agent" ? theme.surfaceRaised : "transparent",
+                  shadowColor: theme.shadow,
+                  opacity: pressed ? 0.72 : 1,
                   transform: [{ scale: pressed ? 0.96 : 1 }],
                 },
               ]}
@@ -648,7 +807,7 @@ export default function App() {
               <MaterialIcons
                 name="support-agent"
                 size={22}
-                color={theme.muted}
+                color={mode === "agent" ? theme.text : theme.muted}
               />
             </Pressable>
 
@@ -687,6 +846,20 @@ export default function App() {
           </View>
         ) : null}
 
+        {mode === "agent" ? (
+          <AgentScreen
+            theme={theme}
+            settings={agentSettings}
+            frameColor={translationSettings.frameColors[agentSettings.language]}
+            apiBaseUrl={apiBaseUrl}
+            reduceMotion={reduceMotion}
+            micPermissionGranted={permissionGranted}
+            messages={agentMessages}
+            onMessagesChanged={setAgentMessages}
+            onRequestPhoto={requestAgentPhoto}
+          />
+        ) : (
+          <>
         <TranscriptPanel
           alignment="top"
           languageLabel={languages.counterpart.mainLabel}
@@ -734,6 +907,8 @@ export default function App() {
           pull={pull}
           orbTravel={orbTravel}
         />
+          </>
+        )}
 
         <SettingsModal
           visible={settingsVisible}
@@ -742,12 +917,22 @@ export default function App() {
           systemColorScheme={systemColorScheme}
           reduceMotion={reduceMotion}
           settings={translationSettings}
+          agentSettings={agentSettings}
           history={translationHistory}
+          agentHistory={agentMessages}
           onThemeModeChanged={handleThemeModeChanged}
           onSaveProfile={handleSaveProfile}
           onSaveFrameColors={handleSaveFrameColors}
           onSaveDisplay={handleSaveDisplay}
+          onSaveAgent={handleSaveAgent}
           onClearHistory={clearHistory}
+          onClearAgentHistory={clearAgentHistory}
+          onRestoreHistory={restoreTranslationHistory}
+          onRestoreAgentHistory={restoreAgentHistory}
+          onOpenDiagnostics={() => {
+            setSettingsVisible(false);
+            setDeveloperVisible(true);
+          }}
           onClose={() => setSettingsVisible(false)}
         />
 
@@ -755,7 +940,7 @@ export default function App() {
           visible={cameraVisible}
           theme={theme}
           onCaptured={handleCameraCaptured}
-          onCancel={() => setCameraVisible(false)}
+          onCancel={handleCameraCancel}
           onError={handleCameraError}
         />
 

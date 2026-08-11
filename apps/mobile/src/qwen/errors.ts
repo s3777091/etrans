@@ -45,6 +45,23 @@ export function classifyQwenError(
     });
   }
 
+  // Qwen retires realtime models without notice; the session then closes with
+  // "Model not exist." and retrying forever would never recover.
+  if (
+    normalized.includes("MODEL NOT EXIST") ||
+    normalized.includes("MODEL NOT FOUND") ||
+    normalized.includes("MODEL_NOT_FOUND") ||
+    normalized.includes("DOES NOT EXIST")
+  ) {
+    return createQwenLiveError({
+      message,
+      code: "MODEL_UNAVAILABLE",
+      scope: "service",
+      retryable: false,
+      closeCode,
+    });
+  }
+
   if (
     normalized.includes("NETWORK") ||
     normalized.includes("SOCKET") ||

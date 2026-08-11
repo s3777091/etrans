@@ -2,11 +2,13 @@ import { Animated, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { AppTheme } from "./theme";
 
-const ACTIVE_SCALE_Y = 0.975;
-const COUNTER_STRETCH_Y = 1.006;
 const FRAME_HORIZONTAL_PADDING = 18;
 const WRAP_NECK_WIDTH = 156;
 const WRAP_NECK_EXTENT = 136;
+const WRAP_STROKE_WIDTH = 2.5;
+const WRAP_JOINT_RADIUS = 15;
+const WRAP_CAP_RADIUS = 18;
+const WRAP_MOUTH_WIDTH = WRAP_NECK_WIDTH + WRAP_JOINT_RADIUS * 2;
 
 interface TranscriptPanelProps {
   languageLabel: string;
@@ -40,11 +42,6 @@ export function TranscriptPanel({
   // Positive means this frame is the one being pulled toward the orb.
   const squash = Animated.multiply(pull, alignment === "top" ? 1 : -1);
 
-  const scaleY = squash.interpolate({
-    inputRange: [-1, 0, 1],
-    outputRange: [COUNTER_STRETCH_Y, 1, ACTIVE_SCALE_Y],
-    extrapolate: "clamp",
-  });
   const wrapProgress = squash.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
@@ -70,17 +67,6 @@ export function TranscriptPanel({
     outputRange: [0.04, 0.18, 1, 1],
     extrapolate: "clamp",
   });
-  const rimScaleX = wrapProgress.interpolate({
-    inputRange: [0, 0.3, 0.72, 1],
-    outputRange: [0.34, 0.5, 0.9, 1],
-    extrapolate: "clamp",
-  });
-  const rimScaleY = wrapProgress.interpolate({
-    inputRange: [0, 0.34, 0.78, 1],
-    outputRange: [0.04, 0.15, 0.86, 1],
-    extrapolate: "clamp",
-  });
-  const nearEdge = alignment === "top" ? "50% 100%" : "50% 0%";
   const neckOrigin = alignment === "top" ? "50% 100%" : "50% 0%";
   const neckPosition =
     alignment === "top"
@@ -89,14 +75,42 @@ export function TranscriptPanel({
   const neckBorders =
     alignment === "top"
       ? {
-          borderBottomWidth: 2.5,
-          borderBottomLeftRadius: 24,
-          borderBottomRightRadius: 24,
+          borderBottomWidth: WRAP_STROKE_WIDTH,
+          borderBottomLeftRadius: WRAP_CAP_RADIUS,
+          borderBottomRightRadius: WRAP_CAP_RADIUS,
         }
       : {
-          borderTopWidth: 2.5,
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
+          borderTopWidth: WRAP_STROKE_WIDTH,
+          borderTopLeftRadius: WRAP_CAP_RADIUS,
+          borderTopRightRadius: WRAP_CAP_RADIUS,
+        };
+  const jointPosition =
+    alignment === "top"
+      ? { bottom: -WRAP_JOINT_RADIUS }
+      : { top: -WRAP_JOINT_RADIUS };
+  const leftJointBorders =
+    alignment === "top"
+      ? {
+          borderTopWidth: WRAP_STROKE_WIDTH,
+          borderRightWidth: WRAP_STROKE_WIDTH,
+          borderTopRightRadius: WRAP_JOINT_RADIUS,
+        }
+      : {
+          borderBottomWidth: WRAP_STROKE_WIDTH,
+          borderRightWidth: WRAP_STROKE_WIDTH,
+          borderBottomRightRadius: WRAP_JOINT_RADIUS,
+        };
+  const rightJointBorders =
+    alignment === "top"
+      ? {
+          borderTopWidth: WRAP_STROKE_WIDTH,
+          borderLeftWidth: WRAP_STROKE_WIDTH,
+          borderTopLeftRadius: WRAP_JOINT_RADIUS,
+        }
+      : {
+          borderBottomWidth: WRAP_STROKE_WIDTH,
+          borderLeftWidth: WRAP_STROKE_WIDTH,
+          borderBottomLeftRadius: WRAP_JOINT_RADIUS,
         };
   const outerMaskPosition =
     alignment === "top" ? { bottom: -4 } : { top: -4 };
@@ -111,9 +125,6 @@ export function TranscriptPanel({
           {
             backgroundColor: theme.surfaceRaised,
             borderColor: `${frameColor}66`,
-            // Anchor on the edge facing the orb so the frame collapses toward it.
-            transformOrigin: alignment === "top" ? "50% 100%" : "50% 0%",
-            transform: [{ scaleY }],
           },
         ]}
       >
@@ -124,8 +135,6 @@ export function TranscriptPanel({
             {
               borderColor: frameColor,
               opacity: wrapOpacity,
-              transformOrigin: nearEdge,
-              transform: [{ scaleX: rimScaleX }, { scaleY: rimScaleY }],
             },
           ]}
         />
@@ -168,6 +177,34 @@ export function TranscriptPanel({
                 { scaleY: neckScaleY },
                 { translateX: orbTravel },
               ],
+            },
+          ]}
+        />
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.wrapJoint,
+            styles.leftWrapJoint,
+            jointPosition,
+            leftJointBorders,
+            {
+              borderColor: frameColor,
+              opacity: wrapOpacity,
+              transform: [{ translateX: orbTravel }],
+            },
+          ]}
+        />
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.wrapJoint,
+            styles.rightWrapJoint,
+            jointPosition,
+            rightJointBorders,
+            {
+              borderColor: frameColor,
+              opacity: wrapOpacity,
+              transform: [{ translateX: orbTravel }],
             },
           ]}
         />
@@ -224,28 +261,43 @@ const styles = StyleSheet.create({
   },
   activeRim: {
     position: "absolute",
-    top: -1.5,
-    left: -1.5,
-    right: -1.5,
-    bottom: -1.5,
-    borderWidth: 2.5,
-    borderRadius: 25.5,
+    top: -0.5,
+    left: -0.5,
+    right: -0.5,
+    bottom: -0.5,
+    borderWidth: WRAP_STROKE_WIDTH,
+    borderRadius: 24.5,
   },
   mouthMask: {
     position: "absolute",
     left: "50%",
-    width: WRAP_NECK_WIDTH - 7,
+    width: WRAP_MOUTH_WIDTH,
     height: 4,
-    marginLeft: -(WRAP_NECK_WIDTH - 7) / 2 + FRAME_HORIZONTAL_PADDING,
+    marginLeft: -WRAP_MOUTH_WIDTH / 2 + FRAME_HORIZONTAL_PADDING,
   },
   wrapNeck: {
     position: "absolute",
     left: "50%",
     width: WRAP_NECK_WIDTH,
-    height: WRAP_NECK_EXTENT,
+    height: WRAP_NECK_EXTENT - WRAP_JOINT_RADIUS + 1,
     marginLeft: -WRAP_NECK_WIDTH / 2 + FRAME_HORIZONTAL_PADDING,
-    borderLeftWidth: 2.5,
-    borderRightWidth: 2.5,
+    borderLeftWidth: WRAP_STROKE_WIDTH,
+    borderRightWidth: WRAP_STROKE_WIDTH,
+  },
+  wrapJoint: {
+    position: "absolute",
+    left: "50%",
+    width: WRAP_JOINT_RADIUS,
+    height: WRAP_JOINT_RADIUS,
+  },
+  leftWrapJoint: {
+    marginLeft:
+      -WRAP_NECK_WIDTH / 2 -
+      WRAP_JOINT_RADIUS +
+      FRAME_HORIZONTAL_PADDING,
+  },
+  rightWrapJoint: {
+    marginLeft: WRAP_NECK_WIDTH / 2 + FRAME_HORIZONTAL_PADDING,
   },
   labelRow: {
     flexDirection: "row",

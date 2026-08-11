@@ -6,10 +6,32 @@ import WebSocket, { type RawData } from "ws";
 
 import { type BackendConfig } from "./config.js";
 import {
+  isAgentLanguage,
   isInterpreterDirection,
   isTextTranslationModel,
   isVoiceTranslationModel,
+  type AgentLanguage,
 } from "./models.js";
+import {
+  runAgentTurn,
+  sanitizeAgentRequest,
+  type AgentEvent,
+} from "./agent/agent.js";
+import {
+  MAX_AUDIO_DATA_URL_LENGTH,
+  TranscriptionError,
+  isSupportedAudioDataUrl,
+  transcribeSpeech,
+} from "./agent/transcribe.js";
+import {
+  buildQwenChatCompletionsUrl,
+  buildQwenRealtimeUrl,
+} from "./qwen-urls.js";
+
+export {
+  buildQwenChatCompletionsUrl,
+  buildQwenRealtimeUrl,
+} from "./qwen-urls.js";
 
 interface LiveQuery {
   direction?: string;
@@ -21,6 +43,11 @@ interface ImageTranslateBody {
   languagePair?: string;
   translationModel?: string;
   translationPrompt?: string;
+}
+
+interface TranscribeBody {
+  audioDataUrl?: string;
+  language?: string;
 }
 
 interface QwenChatCompletion {
@@ -61,7 +88,11 @@ export async function createServer(config: BackendConfig) {
     max: 60,
     timeWindow: "1 minute",
   });
-  await server.register(fastifyWebsocket);
+  // Agent turns carry a photo inside a single frame, so the default payload
+  // ceiling has to leave room for a compressed JPEG data URL.
+  await server.register(fastifyWebsocket, {
+    options: { maxPayload: 8 * 1024 * 1024 },
+  });
 
   server.get("/healthz", async () => ({
     ok: true,
@@ -99,7 +130,10 @@ export async function createServer(config: BackendConfig) {
           message: "Model dịch không được hỗ trợ",
         });
       }
-      const translationModel = config.qwenImageTranslationModel;
+      // Honour the model chosen in the app; the OCR step stays pinned to the
+      // configured vision model because not every chat model can read images.
+      const translationModel =
+        requestedTranslationModel || config.qwenImageTranslationModel;
       const translationPrompt =
         typeof request.body?.translationPrompt === "string"
           ? request.body.translationPrompt.trim().slice(0, 800)
@@ -313,31 +347,137 @@ export async function createServer(config: BackendConfig) {
     },
   );
 
+  server.post<{ Body: TranscribeBody }>(
+    "/v1/agent/transcribe",
+    {
+      bodyLimit: MAX_AUDIO_DATA_URL_LENGTH + 16_384,
+      config: {
+        rateLimit: { max: 30, timeWindow: "1 minute" },
+      },
+    },
+    async (request, reply) => {
+      const audioDataUrl = request.body?.audioDataUrl?.trim() ?? "";
+      if (!isSupportedAudioDataUrl(audioDataUrl)) {
+        return reply.code(400).send({
+          error: "INVALID_AUDIO",
+          message: "Expected a base64 audio data URL under 8 MB",
+        });
+      }
+
+      const requestedLanguage = request.body?.language?.trim() ?? "";
+      const language: AgentLanguage | undefined = isAgentLanguage(
+        requestedLanguage,
+      )
+        ? requestedLanguage
+        : undefined;
+
+      try {
+        const text = await transcribeSpeech(config, audioDataUrl, language);
+        reply.header("Cache-Control", "no-store");
+        return { text };
+      } catch (error) {
+        if (error instanceof TranscriptionError) {
+          request.log.warn({ code: error.code }, "Qwen transcription failed");
+          return reply
+            .code(error.code === "EMPTY_SPEECH" ? 422 : 503)
+            .send({ error: error.code, message: error.message });
+        }
+        request.log.warn({ err: error }, "Qwen transcription failed");
+        return reply.code(503).send({
+          error: "ASR_UNAVAILABLE",
+          message: "Không thể nhận dạng giọng nói lúc này",
+        });
+      }
+    },
+  );
+
+  server.get(
+    "/v1/agent/chat",
+    { websocket: true },
+    (socket, request) => {
+      let running: AbortController | undefined;
+
+      // The turn id travels back on every event so the phone can drop what an
+      // interrupted turn is still emitting.
+      const send = (event: AgentEvent, turnId?: string) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(turnId ? { ...event, turnId } : event));
+        }
+      };
+
+      socket.on("message", (raw) => {
+        let payload: { type?: string; turnId?: unknown } | undefined;
+        try {
+          payload = JSON.parse(raw.toString()) as {
+            type?: string;
+            turnId?: unknown;
+          };
+        } catch {
+          send({
+            type: "agent.error",
+            code: "PROTOCOL_ERROR",
+            message: "Yêu cầu không hợp lệ",
+          });
+          return;
+        }
+
+        if (payload?.type === "agent.cancel") {
+          running?.abort();
+          return;
+        }
+        if (payload?.type !== "agent.turn") return;
+
+        const turnId =
+          typeof payload.turnId === "string"
+            ? payload.turnId.slice(0, 120)
+            : undefined;
+        const turn = sanitizeAgentRequest(payload, config.qwenAgentModel);
+        if (!turn) {
+          send(
+            {
+              type: "agent.error",
+              code: "INVALID_REQUEST",
+              message: "Nội dung tin nhắn không hợp lệ",
+            },
+            turnId,
+          );
+          return;
+        }
+
+        // A new turn always wins: the phone only sends one after the user has
+        // interrupted whatever was streaming.
+        running?.abort();
+
+        const controller = new AbortController();
+        running = controller;
+        void runAgentTurn(
+          config,
+          turn,
+          (event) => send(event, turnId),
+          controller.signal,
+        )
+          .catch((error: unknown) => {
+            request.log.warn({ err: error }, "Agent turn failed");
+            send(
+              {
+                type: "agent.error",
+                code: "AGENT_UNAVAILABLE",
+                message: "Không thể kết nối trợ lý lúc này",
+              },
+              turnId,
+            );
+          })
+          .finally(() => {
+            if (running === controller) running = undefined;
+          });
+      });
+
+      socket.on("close", () => running?.abort());
+      socket.on("error", () => running?.abort());
+    },
+  );
+
   return server;
-}
-
-export function buildQwenRealtimeUrl(baseUrl: string, model: string): string {
-  const url = new URL(baseUrl);
-  url.protocol = "wss:";
-  if (url.pathname.includes("/compatible-mode/")) {
-    url.pathname = "/api-ws/v1/realtime";
-  }
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("model", model);
-  return url.toString();
-}
-
-export function buildQwenChatCompletionsUrl(baseUrl: string): string {
-  const url = new URL(baseUrl);
-  url.protocol = "https:";
-  if (url.pathname.includes("/api-ws/")) {
-    url.pathname = "/compatible-mode/v1";
-  }
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/chat/completions`;
-  url.search = "";
-  url.hash = "";
-  return url.toString();
 }
 
 export function createImageOcrPayload(

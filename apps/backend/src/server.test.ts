@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { QWEN_LIVE_MODEL } from "./models.js";
+import { QWEN_AGENT_MODEL, QWEN_LIVE_MODEL } from "./models.js";
 import {
   buildQwenChatCompletionsUrl,
   buildQwenRealtimeUrl,
@@ -191,6 +191,9 @@ async function makeServer() {
     qwenLiveModel: QWEN_LIVE_MODEL,
     qwenImageOcrModel: "qwen-vl-ocr",
     qwenImageTranslationModel: "qwen-mt-flash",
+    qwenAgentModel: QWEN_AGENT_MODEL,
+    qwenAsrModel: "qwen3-asr-flash",
+    exaApiKey: "",
     host: "127.0.0.1",
     port: 8787,
   });
