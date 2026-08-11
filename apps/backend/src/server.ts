@@ -2,7 +2,7 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify from "fastify";
-import WebSocket, { type RawData } from "ws";
+import WebSocket from "ws";
 
 import { type BackendConfig } from "./config.js";
 import {
@@ -11,6 +11,7 @@ import {
   isTextTranslationModel,
   isVoiceTranslationModel,
   type AgentLanguage,
+  type InterpreterDirection,
 } from "./models.js";
 import {
   runAgentTurn,
@@ -27,6 +28,11 @@ import {
   buildQwenChatCompletionsUrl,
   buildQwenRealtimeUrl,
 } from "./qwen-urls.js";
+import {
+  clientEventsForAudioTranslation,
+  parseRealtimeEvent,
+  serverEventsForAudioTranslation,
+} from "./live-translation.js";
 
 export {
   buildQwenChatCompletionsUrl,
@@ -68,8 +74,7 @@ interface ImageOcrResult {
 }
 
 interface QueuedMessage {
-  data: RawData;
-  isBinary: boolean;
+  data: string;
 }
 
 const MAX_QUEUED_MESSAGES = 256;
@@ -97,7 +102,8 @@ export async function createServer(config: BackendConfig) {
   server.get("/healthz", async () => ({
     ok: true,
     provider: "qwen",
-    model: config.qwenLiveModel,
+    model: config.qwenAsrModel,
+    protocol: "qwen-audio-translation",
   }));
 
   server.post<{ Body: ImageTranslateBody }>(
@@ -277,9 +283,9 @@ export async function createServer(config: BackendConfig) {
       },
     },
     (socket, request) => {
-      const model = request.query.model?.trim() || config.qwenLiveModel;
+      const direction = request.query.direction as InterpreterDirection;
       const upstream = new WebSocket(
-        buildQwenRealtimeUrl(config.qwenBaseUrl, model),
+        buildQwenRealtimeUrl(config.qwenBaseUrl, config.qwenAsrModel),
         {
           headers: {
             Authorization: `Bearer ${config.dashscopeApiKey}`,
@@ -296,27 +302,53 @@ export async function createServer(config: BackendConfig) {
         closeSocket(upstream, code, reason);
       };
 
-      socket.on("message", (data, isBinary) => {
+      const sendUpstream = (data: string) => {
         if (upstream.readyState === WebSocket.OPEN) {
-          upstream.send(data, { binary: isBinary });
-          return;
-        }
-        if (pending.length >= MAX_QUEUED_MESSAGES) {
+          upstream.send(data);
+        } else if (pending.length >= MAX_QUEUED_MESSAGES) {
           closeBoth(1009, "Too many queued audio messages");
+        } else {
+          pending.push({ data });
+        }
+      };
+
+      socket.on("message", (data, isBinary) => {
+        if (isBinary) {
+          closeBoth(1003, "Expected JSON audio events");
           return;
         }
-        pending.push({ data, isBinary });
+        const message = parseRealtimeEvent(data.toString());
+        if (!message) {
+          closeBoth(1003, "Invalid realtime event");
+          return;
+        }
+        for (const event of clientEventsForAudioTranslation(
+          message,
+          direction,
+          config.qwenAudioVoice,
+        )) {
+          sendUpstream(JSON.stringify(event));
+        }
       });
 
       upstream.on("open", () => {
         for (const message of pending.splice(0)) {
-          upstream.send(message.data, { binary: message.isBinary });
+          upstream.send(message.data);
         }
       });
 
-      upstream.on("message", (data, isBinary) => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(data, { binary: isBinary });
+      upstream.on("message", (data) => {
+        const message = parseRealtimeEvent(data.toString());
+        if (!message) {
+          request.log.warn("Qwen returned an invalid realtime event");
+          sendProxyError(socket, "SERVICE_UNAVAILABLE");
+          closeBoth(1011, "Invalid Qwen event");
+          return;
+        }
+        for (const event of serverEventsForAudioTranslation(message)) {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(event));
+          }
         }
       });
 

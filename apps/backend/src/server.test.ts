@@ -27,7 +27,8 @@ describe("Qwen realtime proxy", () => {
     expect(response.json()).toEqual({
       ok: true,
       provider: "qwen",
-      model: QWEN_LIVE_MODEL,
+      model: "qwen-audio-3.0-realtime-plus",
+      protocol: "qwen-audio-translation",
     });
   });
 
@@ -188,11 +189,11 @@ async function makeServer() {
     dashscopeApiKey: "test-key-not-used",
     qwenBaseUrl:
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    qwenLiveModel: QWEN_LIVE_MODEL,
     qwenImageOcrModel: "qwen-vl-ocr",
     qwenImageTranslationModel: "qwen-mt-flash",
     qwenAgentModel: QWEN_AGENT_MODEL,
-    qwenAsrModel: "qwen3-asr-flash",
+    qwenAsrModel: "qwen-audio-3.0-realtime-plus",
+    qwenAudioVoice: "longanlingxin",
     exaApiKey: "",
     host: "127.0.0.1",
     port: 8787,

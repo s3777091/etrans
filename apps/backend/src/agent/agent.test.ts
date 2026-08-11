@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { QWEN_AGENT_MODEL, QWEN_LIVE_MODEL } from "../models.js";
+import { QWEN_AGENT_MODEL } from "../models.js";
 import { type BackendConfig } from "../config.js";
 import {
   buildAgentPayload,
@@ -469,11 +469,11 @@ function makeConfig(): BackendConfig {
   return {
     dashscopeApiKey: "test-key-not-used",
     qwenBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    qwenLiveModel: QWEN_LIVE_MODEL,
     qwenImageOcrModel: "qwen3.6-flash",
     qwenImageTranslationModel: "qwen3.6-flash",
     qwenAgentModel: QWEN_AGENT_MODEL,
     qwenAsrModel: "qwen3-asr-flash",
+    qwenAudioVoice: "longanlingxin",
     exaApiKey: "exa-test-key",
     host: "127.0.0.1",
     port: 8787,

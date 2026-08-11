@@ -7,12 +7,13 @@
 ```text
 Điện thoại (PCM 16-bit, 16 kHz, mono)
   -> WebSocket máy chủ /v1/qwen/live
-  -> Qwen LiveTranslate realtime
+  -> adapter push-to-talk của máy chủ
+  -> Qwen Audio realtime
   -> âm thanh dịch PCM 24 kHz
   -> loa điện thoại
 ```
 
-Model giọng nói mặc định: `qwen3.5-livetranslate-flash-realtime`. Dịch chữ trong ảnh dùng `qwen3.6-flash` với chế độ suy luận dài được tắt để ưu tiên tốc độ.
+Model giọng nói mặc định: `qwen-audio-3.0-realtime-plus`. Máy chủ chuyển giao thức LiveTranslate của các bản app đã phát hành sang giao thức push-to-talk của Qwen Audio, đồng thời ép phiên thành bộ dịch một chiều theo hướng người dùng chọn. Dịch chữ trong ảnh dùng `qwen3.6-flash` với chế độ suy luận dài được tắt để ưu tiên tốc độ.
 
 API key chỉ tồn tại ở máy chủ. Âm thanh đi qua máy chủ WebSocket vì Qwen không cung cấp token tạm thời an toàn để kết nối trực tiếp từ APK.
 
@@ -207,11 +208,11 @@ app thì ai tải `.ipa`/`.apk` về cũng đọc được.
 | --- | --- | --- | --- |
 | `DASHSCOPE_API_KEY` | có | – | Khoá Qwen. Máy chủ không chạy nếu thiếu. |
 | `QWEN_BASE_URL` | không | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | Endpoint Qwen. Phải là HTTPS hoặc WSS. |
-| `QWEN_LIVE_MODEL` | không | `qwen3.5-livetranslate-flash-realtime` | Model phiên dịch trực tiếp. Xem mục dưới: model này hiện không còn trên endpoint mặc định. |
 | `QWEN_IMAGE_OCR_MODEL` | không | `qwen3.6-flash` | Đọc chữ trong ảnh. Phải là model nhìn được ảnh. |
 | `QWEN_IMAGE_TRANSLATION_MODEL` | không | `qwen3.6-flash` | Dịch chữ đã đọc, khi app không chọn model riêng. |
 | `QWEN_AGENT_MODEL` | không | `qwen3.6-flash` | Model trợ lý mặc định khi app không gửi lựa chọn. |
-| `QWEN_ASR_MODEL` | không | `qwen-audio-3.0-realtime-plus` | Phiên realtime dùng để chép lời cho trợ lý. |
+| `QWEN_ASR_MODEL` | không | `qwen-audio-3.0-realtime-plus` | Model realtime dùng cho phiên dịch giọng nói và chép lời cho trợ lý. |
+| `QWEN_AUDIO_VOICE` | không | `longanlingxin` | Giọng Qwen Audio dùng để đọc bản dịch. |
 | `EXA_API_KEY` | không | rỗng | Tìm kiếm web của trợ lý. Bỏ trống thì máy chủ tự gỡ công cụ tìm kiếm. Lấy ở <https://dashboard.exa.ai/api-keys>. |
 | `PORT` | không | `8787` | Cổng lắng nghe. |
 | `HOST` | không | `0.0.0.0` | Địa chỉ lắng nghe. |
@@ -255,14 +256,12 @@ Tính đến 11/08/2026 danh sách gồm `qwen3.8-max`, `qwen3.7-max`, `qwen3.7-
 `glm-5.2`, `deepseek-v4-pro`, `deepseek-v4-flash-0731`, `wan2.7-image`,
 `wan2.7-image-pro`.
 
-**Hai model phiên dịch trực tiếp (`qwen3.5-livetranslate-flash-realtime` và
-`qwen3-livetranslate-flash-realtime`) KHÔNG còn trong danh sách này.** Phiên
-realtime bị đóng ngay với mã 1007 kèm lý do `Model not exist.`, nên chức năng
-kéo quả cầu để phiên dịch không chạy được cho tới khi đổi endpoint hoặc mở
-quyền dùng model đó. Ứng dụng nay báo thẳng lỗi này thay vì thử kết nối lại vô
-hạn.
-
-Trợ lý EAgent và dịch ảnh vẫn chạy vì dùng model còn trong danh sách.
+**Hai model LiveTranslate cũ (`qwen3.5-livetranslate-flash-realtime` và
+`qwen3-livetranslate-flash-realtime`) không còn trong danh sách này.** Backend
+không gọi chúng nữa: route `/v1/qwen/live` giữ nguyên cho app cũ nhưng chuyển
+sự kiện sang `qwen-audio-3.0-realtime-plus`, dùng chế độ push-to-talk và system
+instruction để chỉ trả về bản dịch. Trợ lý EAgent và dịch ảnh tiếp tục dùng các
+model riêng như trước.
 
 ## Kiểm tra
 
