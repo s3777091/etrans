@@ -22,6 +22,8 @@ export interface AgentChatMessage {
   sources?: AgentSource[];
   searches?: string[];
   status?: "streaming" | "done" | "error";
+  /** Canned text shown by the app. Never sent upstream, so it costs no tokens. */
+  local?: boolean;
   createdAt: number;
 }
 
@@ -92,7 +94,7 @@ export function toWireMessages(
   messages: AgentChatMessage[],
 ): WireMessage[] {
   const usable = messages
-    .filter((message) => message.status !== "error")
+    .filter((message) => message.status !== "error" && !message.local)
     .filter((message) => message.text.trim() || message.imageDataUrl)
     .slice(-MAX_HISTORY_MESSAGES);
   const imageCutoff = usable.length - IMAGE_HISTORY_DEPTH;

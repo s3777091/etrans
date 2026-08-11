@@ -29,6 +29,7 @@ export function serializeAgentHistory(messages: AgentChatMessage[]): string {
         (message.imageDataUrl || message.imageUri ? "[Ảnh]" : ""),
       sources: message.sources,
       status: message.status === "error" ? "error" : "done",
+      local: message.local,
       createdAt: message.createdAt,
     }))
     .map((item) => sanitizeMessage(item))
@@ -80,6 +81,8 @@ function sanitizeMessage(value: unknown): AgentChatMessage | undefined {
     text,
     sources: sanitizeSources(item.sources),
     status: item.status === "error" ? "error" : "done",
+    // Kept so a restored greeting still stays out of the upstream payload.
+    ...(item.local === true ? { local: true } : {}),
     createdAt: item.createdAt as number,
   };
 }

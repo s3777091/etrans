@@ -24,6 +24,21 @@ describe("agent chat client", () => {
     );
   });
 
+  it("keeps the canned greeting out of the payload", () => {
+    // The greeting is app text, so paying for it on every turn is waste.
+    expect(
+      toWireMessages([
+        message({
+          id: "greeting",
+          role: "assistant",
+          text: "Xin chào, tôi giúp được gì cho bạn?",
+          local: true,
+        }),
+        message({ id: "1", text: "Mấy giờ rồi?" }),
+      ]),
+    ).toEqual([{ role: "user", content: "Mấy giờ rồi?" }]);
+  });
+
   it("sends only the newest photos and skips failed turns", () => {
     const messages: AgentChatMessage[] = [
       message({ id: "1", text: "Ảnh đầu", imageDataUrl: dataUrl("a") }),

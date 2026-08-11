@@ -254,6 +254,7 @@ export function AgentScreen({
         role: "assistant",
         text: GREETINGS[settings.language],
         status: "done",
+        local: true,
         createdAt: Date.now(),
       },
     ]);
