@@ -1,22 +1,36 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, PanResponder, StyleSheet, View } from "react-native";
+import {
+  Animated,
+  Easing,
+  PanResponder,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
 
 import type { InterpreterDirection } from "../qwen/types";
 import {
   directionForHorizontalDelta,
   orbTravelForGesture,
 } from "./gesture-direction";
+import {
+  activationThresholdForTravel,
+  maxOrbTravel,
+  POCKET_NECK_WIDTH,
+} from "./pocket-geometry";
 import type { AppTheme } from "./theme";
+import { VoicePulse } from "./VoicePulse";
 
 const GESTURE_START_THRESHOLD = 6;
 const DIRECTION_LOCK_THRESHOLD = 12;
 const HORIZONTAL_INTENT_RATIO = 1.2;
-const ACTIVATION_THRESHOLD = 68;
-const MAX_TRAVEL = 112;
+const ORB_SIZE = 92;
 const DOUBLE_TAP_WINDOW_MS = 320;
 const RECALL_DURATION_MS = 540;
+/** Widest the ripple may grow before it pokes through the pocket walls. */
+const PULSE_MAX_SCALE = POCKET_NECK_WIDTH / ORB_SIZE;
 
 interface GestureOrbProps {
   theme: AppTheme;
@@ -59,8 +73,6 @@ export function GestureOrb({
   onRelease,
   onDoubleTap,
 }: GestureOrbProps) {
-  const pulse = useRef(new Animated.Value(0)).current;
-  const trailingPulse = useRef(new Animated.Value(0)).current;
   const recall = useRef(new Animated.Value(1)).current;
   const activatedRef = useRef<InterpreterDirection | undefined>(undefined);
   const preparedRef = useRef<InterpreterDirection | undefined>(undefined);
@@ -72,6 +84,13 @@ export function GestureOrb({
   const [activated, setActivated] = useState<InterpreterDirection>();
   const [engaged, setEngaged] = useState<InterpreterDirection>();
 
+  // How far the frame above can stretch its pocket sideways before the opening
+  // would reach a rounded corner. The orb stops there too, otherwise it drags
+  // itself out of the pocket and leaves a torn frame behind.
+  const { width: windowWidth } = useWindowDimensions();
+  const maxTravel = maxOrbTravel(windowWidth);
+  const activationThreshold = activationThresholdForTravel(maxTravel);
+
   // The pan responder is created once. Rebuilding it while a finger is down
   // resets the gesture state, so every prop it reads goes through a ref.
   const settingsRef = useRef({
@@ -79,6 +98,8 @@ export function GestureOrb({
     reduceMotion,
     rightDirection,
     leftDirection,
+    maxTravel,
+    activationThreshold,
   });
   const callbacksRef = useRef({
     onPrepare,
@@ -93,61 +114,13 @@ export function GestureOrb({
       reduceMotion,
       rightDirection,
       leftDirection,
+      maxTravel,
+      activationThreshold,
     };
     callbacksRef.current = { onPrepare, onActivate, onRelease, onDoubleTap };
   });
 
   const isPulsing = Boolean(engaged) || waitingForTranslation;
-
-  useEffect(() => {
-    pulse.stopAnimation();
-    trailingPulse.stopAnimation();
-
-    if (!isPulsing) {
-      pulse.setValue(0);
-      trailingPulse.setValue(0);
-      return;
-    }
-
-    if (reduceMotion) {
-      pulse.setValue(0.24);
-      trailingPulse.setValue(0);
-      return;
-    }
-
-    pulse.setValue(0);
-    trailingPulse.setValue(0);
-    const duration = 1_180;
-    const offset = 420;
-    const primaryLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.delay(offset),
-      ]),
-    );
-    const trailingLoop = Animated.loop(
-      Animated.sequence([
-        Animated.delay(offset),
-        Animated.timing(trailingPulse, {
-          toValue: 1,
-          duration,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    primaryLoop.start();
-    trailingLoop.start();
-    return () => {
-      primaryLoop.stop();
-      trailingLoop.stop();
-    };
-  }, [isPulsing, pulse, reduceMotion, trailingPulse]);
 
   const panResponder = useMemo(() => {
     const resetVisuals = (reduceMotionNow: boolean, hadPull: boolean) => {
@@ -274,12 +247,15 @@ export function GestureOrb({
         const clamped = orbTravelForGesture(
           direction,
           gesture.dx,
-          MAX_TRAVEL,
+          settingsRef.current.maxTravel,
           settingsRef.current.rightDirection,
         );
         orbTravel.setValue(clamped);
         const distance = Math.abs(clamped);
-        const progress = Math.min(1, distance / ACTIVATION_THRESHOLD);
+        const progress = Math.min(
+          1,
+          distance / settingsRef.current.activationThreshold,
+        );
         pull.setValue(
           direction === settingsRef.current.rightDirection
             ? progress
@@ -291,7 +267,10 @@ export function GestureOrb({
           callbacksRef.current.onPrepare(direction);
         }
 
-        if (distance >= ACTIVATION_THRESHOLD && !activatedRef.current) {
+        if (
+          distance >= settingsRef.current.activationThreshold &&
+          !activatedRef.current
+        ) {
           activatedRef.current = direction;
           setActivated(direction);
           void Haptics.impactAsync(
@@ -307,27 +286,11 @@ export function GestureOrb({
     });
   }, [orbTravel, pull, recall]);
 
-  const ringOpacity = pulse.interpolate({
-    inputRange: [0, 0.24, 1],
-    outputRange: [0.48, 0.32, 0],
-  });
-  const ringScaleX = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.94, 1.92],
-  });
-  const trailingRingOpacity = trailingPulse.interpolate({
-    inputRange: [0, 0.2, 1],
-    outputRange: [0.4, 0.26, 0],
-  });
-  const trailingRingScaleX = trailingPulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.96, 1.7],
-  });
   const recallOpacity = recall.interpolate({
     inputRange: [0, 0.28, 1],
     outputRange: [0, 0.46, 0],
   });
-  const recallScaleX = recall.interpolate({
+  const recallScale = recall.interpolate({
     inputRange: [0, 1],
     outputRange: [2.05, 0.94],
   });
@@ -367,30 +330,13 @@ export function GestureOrb({
           },
         ]}
       >
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.ring,
-            {
-              borderColor: gestureColor,
-              opacity: ringOpacity,
-              transform: [{ scaleX: ringScaleX }],
-            },
-          ]}
+        <VoicePulse
+          active={isPulsing}
+          color={gestureColor}
+          size={ORB_SIZE}
+          maxScale={PULSE_MAX_SCALE}
+          reduceMotion={reduceMotion}
         />
-        {!reduceMotion ? (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.ring,
-              {
-                borderColor: gestureColor,
-                opacity: trailingRingOpacity,
-                transform: [{ scaleX: trailingRingScaleX }],
-              },
-            ]}
-          />
-        ) : null}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -398,7 +344,7 @@ export function GestureOrb({
             {
               borderColor: gestureColor,
               opacity: recallOpacity,
-              transform: [{ scaleX: recallScaleX }],
+              transform: [{ scale: recallScale }],
             },
           ]}
         />
@@ -460,23 +406,23 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: "50%",
     top: 18,
-    width: 92,
-    height: 92,
-    marginLeft: -46,
+    width: ORB_SIZE,
+    height: ORB_SIZE,
+    marginLeft: -ORB_SIZE / 2,
     alignItems: "center",
     justifyContent: "center",
   },
   ring: {
     position: "absolute",
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    width: ORB_SIZE,
+    height: ORB_SIZE,
+    borderRadius: ORB_SIZE / 2,
     borderWidth: 2,
   },
   orb: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    width: ORB_SIZE,
+    height: ORB_SIZE,
+    borderRadius: ORB_SIZE / 2,
     borderWidth: 3,
     alignItems: "center",
     justifyContent: "center",

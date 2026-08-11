@@ -1,14 +1,50 @@
+import { useState } from "react";
 import { Animated, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import {
+  FRAME_CORNER_RADIUS,
+  FRAME_SIDE_MARGIN,
+  maxPocketShift,
+  POCKET_JOINT_RADIUS,
+  POCKET_MOUTH_WIDTH,
+  POCKET_NECK_WIDTH,
+  POCKET_STROKE_WIDTH,
+} from "./pocket-geometry";
 import type { AppTheme } from "./theme";
 
 const FRAME_HORIZONTAL_PADDING = 18;
-const WRAP_NECK_WIDTH = 156;
+const WRAP_NECK_WIDTH = POCKET_NECK_WIDTH;
 const WRAP_NECK_EXTENT = 136;
-const WRAP_STROKE_WIDTH = 2.5;
-const WRAP_JOINT_RADIUS = 15;
+const WRAP_STROKE_WIDTH = POCKET_STROKE_WIDTH;
+const WRAP_JOINT_RADIUS = POCKET_JOINT_RADIUS;
 const WRAP_CAP_RADIUS = 18;
-const WRAP_MOUTH_WIDTH = WRAP_NECK_WIDTH + WRAP_JOINT_RADIUS * 2;
+const FRAME_BORDER_WIDTH = 1.5;
+/** The lit rim sits exactly on top of the frame's resting border instead of
+ *  just inside it. Any less and the mouth reads as a thinner stretch of
+ *  outline, because the mask has to take the resting border with it. */
+const RIM_INSET = FRAME_BORDER_WIDTH;
+
+// The pocket is drawn as three separate views — two corner joints and the neck
+// — and every border is painted INSIDE its own box. Butting the boxes edge to
+// edge therefore lays the strokes side by side instead of on top of each other,
+// which is what tore the outline: a joint's curve ended one stroke width away
+// from the wall it was supposed to continue into. Each joint is pulled back
+// over its neighbour by exactly one stroke so the two paint the same band.
+
+/** Left edge of the neck box, measured from the pocket centre. */
+const NECK_LEFT = -WRAP_NECK_WIDTH / 2;
+/** Joint boxes overlap the neck walls by a stroke so the curves line up. */
+const LEFT_JOINT_LEFT = NECK_LEFT + WRAP_STROKE_WIDTH - WRAP_JOINT_RADIUS;
+const RIGHT_JOINT_LEFT = -NECK_LEFT - WRAP_STROKE_WIDTH;
+/** …and stand on the rim's own band rather than under the frame's edge. */
+const JOINT_EDGE_INSET = WRAP_JOINT_RADIUS - (WRAP_STROKE_WIDTH - RIM_INSET);
+/** The walls run up behind the joints, so the seam cannot open a gap. */
+const WRAP_NECK_HEIGHT = WRAP_NECK_EXTENT - JOINT_EDGE_INSET + 1;
+/** The opening stops a hair short of the joints so the rim runs under the
+ *  start of each curve. Cutting it flush leaves an antialiased seam where the
+ *  two strokes butt together. */
+const MASK_SEAM_OVERLAP = 1;
+const WRAP_MOUTH_WIDTH = POCKET_MOUTH_WIDTH - MASK_SEAM_OVERLAP * 2;
 
 interface TranscriptPanelProps {
   languageLabel: string;
@@ -41,6 +77,17 @@ export function TranscriptPanel({
 }: TranscriptPanelProps) {
   // Positive means this frame is the one being pulled toward the orb.
   const squash = Animated.multiply(pull, alignment === "top" ? 1 : -1);
+
+  // The pocket follows the orb sideways, but it is an opening cut into the
+  // frame edge: let it reach a rounded corner and the outline tears open. The
+  // frame is measured rather than assumed so no screen width can break it.
+  const [frameWidth, setFrameWidth] = useState(0);
+  const shiftLimit = maxPocketShift(frameWidth);
+  const pocketShift = orbTravel.interpolate({
+    inputRange: [-Math.max(shiftLimit, 1), 0, Math.max(shiftLimit, 1)],
+    outputRange: [-shiftLimit, 0, shiftLimit],
+    extrapolate: "clamp",
+  });
 
   const wrapProgress = squash.interpolate({
     inputRange: [0, 1],
@@ -86,32 +133,15 @@ export function TranscriptPanel({
         };
   const jointPosition =
     alignment === "top"
-      ? { bottom: -WRAP_JOINT_RADIUS }
-      : { top: -WRAP_JOINT_RADIUS };
-  const leftJointBorders =
-    alignment === "top"
-      ? {
-          borderTopWidth: WRAP_STROKE_WIDTH,
-          borderRightWidth: WRAP_STROKE_WIDTH,
-          borderTopRightRadius: WRAP_JOINT_RADIUS,
-        }
-      : {
-          borderBottomWidth: WRAP_STROKE_WIDTH,
-          borderRightWidth: WRAP_STROKE_WIDTH,
-          borderBottomRightRadius: WRAP_JOINT_RADIUS,
-        };
-  const rightJointBorders =
-    alignment === "top"
-      ? {
-          borderTopWidth: WRAP_STROKE_WIDTH,
-          borderLeftWidth: WRAP_STROKE_WIDTH,
-          borderTopLeftRadius: WRAP_JOINT_RADIUS,
-        }
-      : {
-          borderBottomWidth: WRAP_STROKE_WIDTH,
-          borderLeftWidth: WRAP_STROKE_WIDTH,
-          borderBottomLeftRadius: WRAP_JOINT_RADIUS,
-        };
+      ? { bottom: -JOINT_EDGE_INSET }
+      : { top: -JOINT_EDGE_INSET };
+  // Each joint is a quarter of a full ring, clipped to the quadrant that turns
+  // the frame edge into the pocket wall. Drawing it as a box with only two
+  // borders instead leaves Android painting a hairline down the sides that
+  // carry no border at all — visible as a stray tick beside the curve.
+  const arcVertical = alignment === "top" ? { top: 0 } : { top: -WRAP_JOINT_RADIUS };
+  const leftArcPosition = { ...arcVertical, left: -WRAP_JOINT_RADIUS };
+  const rightArcPosition = { ...arcVertical, left: 0 };
   const outerMaskPosition =
     alignment === "top" ? { bottom: -4 } : { top: -4 };
   const innerMaskPosition =
@@ -120,6 +150,7 @@ export function TranscriptPanel({
   return (
     <View style={styles.container}>
       <Animated.View
+        onLayout={(event) => setFrameWidth(event.nativeEvent.layout.width)}
         style={[
           styles.frame,
           {
@@ -146,7 +177,7 @@ export function TranscriptPanel({
             {
               backgroundColor: theme.background,
               opacity: mouthOpacity,
-              transform: [{ translateX: orbTravel }],
+              transform: [{ translateX: pocketShift }],
             },
           ]}
         />
@@ -158,7 +189,7 @@ export function TranscriptPanel({
             {
               backgroundColor: theme.surfaceRaised,
               opacity: mouthOpacity,
-              transform: [{ translateX: orbTravel }],
+              transform: [{ translateX: pocketShift }],
             },
           ]}
         />
@@ -175,7 +206,7 @@ export function TranscriptPanel({
               transform: [
                 { scaleX: neckScaleX },
                 { scaleY: neckScaleY },
-                { translateX: orbTravel },
+                { translateX: pocketShift },
               ],
             },
           ]}
@@ -186,28 +217,50 @@ export function TranscriptPanel({
             styles.wrapJoint,
             styles.leftWrapJoint,
             jointPosition,
-            leftJointBorders,
             {
-              borderColor: frameColor,
               opacity: wrapOpacity,
-              transform: [{ translateX: orbTravel }],
+              transform: [{ translateX: pocketShift }],
             },
           ]}
-        />
+        >
+          <View
+            style={[
+              styles.jointArc,
+              leftArcPosition,
+              {
+                borderTopColor: frameColor,
+                borderRightColor: frameColor,
+                borderBottomColor: frameColor,
+                borderLeftColor: frameColor,
+              },
+            ]}
+          />
+        </Animated.View>
         <Animated.View
           pointerEvents="none"
           style={[
             styles.wrapJoint,
             styles.rightWrapJoint,
             jointPosition,
-            rightJointBorders,
             {
-              borderColor: frameColor,
               opacity: wrapOpacity,
-              transform: [{ translateX: orbTravel }],
+              transform: [{ translateX: pocketShift }],
             },
           ]}
-        />
+        >
+          <View
+            style={[
+              styles.jointArc,
+              rightArcPosition,
+              {
+                borderTopColor: frameColor,
+                borderRightColor: frameColor,
+                borderBottomColor: frameColor,
+                borderLeftColor: frameColor,
+              },
+            ]}
+          />
+        </Animated.View>
 
         <View style={styles.labelRow}>
           <Text style={[styles.label, { color: frameColor }]}>
@@ -248,25 +301,25 @@ export function TranscriptPanel({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 18,
+    paddingHorizontal: FRAME_SIDE_MARGIN,
     paddingVertical: 8,
   },
   frame: {
     flex: 1,
-    borderWidth: 1.5,
-    borderRadius: 24,
+    borderWidth: FRAME_BORDER_WIDTH,
+    borderRadius: FRAME_CORNER_RADIUS,
     paddingHorizontal: FRAME_HORIZONTAL_PADDING,
     paddingTop: 12,
     paddingBottom: 12,
   },
   activeRim: {
     position: "absolute",
-    top: -0.5,
-    left: -0.5,
-    right: -0.5,
-    bottom: -0.5,
+    top: -RIM_INSET,
+    left: -RIM_INSET,
+    right: -RIM_INSET,
+    bottom: -RIM_INSET,
     borderWidth: WRAP_STROKE_WIDTH,
-    borderRadius: 24.5,
+    borderRadius: FRAME_CORNER_RADIUS,
   },
   mouthMask: {
     position: "absolute",
@@ -279,7 +332,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: "50%",
     width: WRAP_NECK_WIDTH,
-    height: WRAP_NECK_EXTENT - WRAP_JOINT_RADIUS + 1,
+    height: WRAP_NECK_HEIGHT,
     marginLeft: -WRAP_NECK_WIDTH / 2 + FRAME_HORIZONTAL_PADDING,
     borderLeftWidth: WRAP_STROKE_WIDTH,
     borderRightWidth: WRAP_STROKE_WIDTH,
@@ -289,15 +342,20 @@ const styles = StyleSheet.create({
     left: "50%",
     width: WRAP_JOINT_RADIUS,
     height: WRAP_JOINT_RADIUS,
+    overflow: "hidden",
+  },
+  jointArc: {
+    position: "absolute",
+    width: WRAP_JOINT_RADIUS * 2,
+    height: WRAP_JOINT_RADIUS * 2,
+    borderRadius: WRAP_JOINT_RADIUS,
+    borderWidth: WRAP_STROKE_WIDTH,
   },
   leftWrapJoint: {
-    marginLeft:
-      -WRAP_NECK_WIDTH / 2 -
-      WRAP_JOINT_RADIUS +
-      FRAME_HORIZONTAL_PADDING,
+    marginLeft: LEFT_JOINT_LEFT + FRAME_HORIZONTAL_PADDING,
   },
   rightWrapJoint: {
-    marginLeft: WRAP_NECK_WIDTH / 2 + FRAME_HORIZONTAL_PADDING,
+    marginLeft: RIGHT_JOINT_LEFT + FRAME_HORIZONTAL_PADDING,
   },
   labelRow: {
     flexDirection: "row",

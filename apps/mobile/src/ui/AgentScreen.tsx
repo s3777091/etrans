@@ -44,9 +44,14 @@ import {
 import { LANGUAGE_META } from "../settings/translation-settings";
 import type { CapturedPhoto } from "./CameraCaptureModal";
 import type { AppTheme } from "./theme";
+import { VoicePulse } from "./VoicePulse";
 
 const ORB_SIZE = 78;
 const ORB_MARGIN = 18;
+/** The orb is docked in a corner, so the ripple stops at the frame edge. */
+const PULSE_CLEARANCE = 4;
+const PULSE_MAX_SCALE =
+  (ORB_MARGIN + ORB_SIZE / 2 - PULSE_CLEARANCE) / (ORB_SIZE / 2);
 const FRAME_INSET = 10;
 const FRAME_PADDING = 12;
 const HOLD_THRESHOLD_MS = 200;
@@ -122,7 +127,6 @@ export function AgentScreen({
   const entrance = useRef(new Animated.Value(0)).current;
   const open = useRef(new Animated.Value(0)).current;
   const landing = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
 
   // The orb starts exactly where the translate screen left it — the middle of
   // the body — and ends docked in the bottom corner of the chat frame.
@@ -271,25 +275,6 @@ export function AgentScreen({
       ];
     });
   }, [entranceDone, leaving, messages, setMessages, settings.language]);
-
-  useEffect(() => {
-    pulse.stopAnimation();
-    if (phase !== "recording" || reduceMotion) {
-      pulse.setValue(0);
-      return;
-    }
-    pulse.setValue(0);
-    const loop = Animated.loop(
-      Animated.timing(pulse, {
-        toValue: 1,
-        duration: 1_100,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [phase, pulse, reduceMotion]);
 
   const sendTurn = useCallback(
     (message: AgentChatMessage) => {
@@ -494,16 +479,6 @@ export function AgentScreen({
     inputRange: [0, 1],
     outputRange: [1, 0.84],
   });
-  const ringOpacity = pulse.interpolate({
-    inputRange: [0, 0.2, 1],
-    outputRange: [0.5, 0.34, 0],
-  });
-  // Every voice control uses the same horizontal pulse language.
-  const ringScaleX = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.94, 2.15],
-  });
-
   return (
     <View
       style={styles.zone}
@@ -574,19 +549,13 @@ export function AgentScreen({
           },
         ]}
       >
-        {phase === "recording" ? (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.ring,
-              {
-                borderColor: frameColor,
-                opacity: ringOpacity,
-                transform: [{ scaleX: ringScaleX }],
-              },
-            ]}
-          />
-        ) : null}
+        <VoicePulse
+          active={phase === "recording"}
+          color={frameColor}
+          size={ORB_SIZE}
+          maxScale={PULSE_MAX_SCALE}
+          reduceMotion={reduceMotion}
+        />
         <Pressable
           accessibilityLabel="Giữ để nói với trợ lý, nhấn đúp để gửi ảnh"
           accessibilityHint="Nhấn giữ để bật micro, thả tay để gửi"
@@ -848,13 +817,6 @@ const styles = StyleSheet.create({
     height: ORB_SIZE,
     alignItems: "center",
     justifyContent: "center",
-  },
-  ring: {
-    position: "absolute",
-    width: ORB_SIZE,
-    height: ORB_SIZE,
-    borderRadius: ORB_SIZE / 2,
-    borderWidth: 2,
   },
   orb: {
     width: ORB_SIZE,
