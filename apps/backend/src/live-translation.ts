@@ -27,6 +27,14 @@ const AUDIO_FRAME_BYTES = 3_200;
 const LIVE_TRANSLATE_ASR_MODEL = "qwen3-asr-flash-realtime";
 
 /**
+ * The phone's PCM player is fixed at 24 kHz. Left unset the model answers at
+ * 16 kHz, and the same samples played out at 24 kHz run half again too fast and
+ * a fifth too high — speech the listener cannot follow. It governs the spoken
+ * answer only; the source transcript is unchanged by it.
+ */
+const OUTPUT_SAMPLE_RATE = 24_000;
+
+/**
  * Per-turn state for the language gate. The source transcript arrives before
  * the translation and its audio, so a segment the ASR heard in the wrong
  * language can be caught before any of it reaches the phone.
@@ -34,10 +42,37 @@ const LIVE_TRANSLATE_ASR_MODEL = "qwen3-asr-flash-realtime";
 interface TurnLanguageGate {
   sourceTranscript: string;
   rejected: boolean;
+  /** Whether the source transcript has been seen and judged yet. */
+  sourceChecked: boolean;
+  /** Audio that arrived before that judgement, held rather than forwarded. */
+  pendingAudio: string[];
 }
 
 export function createTurnLanguageGate(): TurnLanguageGate {
-  return { sourceTranscript: "", rejected: false };
+  return {
+    sourceTranscript: "",
+    rejected: false,
+    sourceChecked: false,
+    pendingAudio: [],
+  };
+}
+
+/**
+ * The spoken answer can start arriving before the source transcript it was
+ * built from, so audio held back by the gate is released here once the turn
+ * ends without ever being judged. Without this a turn whose transcript never
+ * arrives would play nothing at all.
+ */
+export function releasePendingAudio(
+  gate: TurnLanguageGate,
+): Record<string, unknown>[] {
+  if (gate.rejected) return [];
+  const released = gate.pendingAudio.map((delta) => ({
+    type: "response.audio.delta",
+    delta,
+  }));
+  gate.pendingAudio = [];
+  return released;
 }
 
 interface RealtimeServerMessage {
@@ -84,6 +119,7 @@ export function createTranslationSessionUpdate(
       voice,
       input_audio_format: "pcm",
       output_audio_format: "pcm",
+      sample_rate: OUTPUT_SAMPLE_RATE,
       // Declares the language this turn is expected in. The model treats it as
       // a hint, so the backend still verifies what comes back.
       input_audio_transcription: {
@@ -113,25 +149,30 @@ export function clientEventForServerMessage(
   message: RealtimeServerMessage,
   direction: InterpreterDirection,
   gate: TurnLanguageGate,
-): Record<string, unknown> | undefined {
+): Record<string, unknown>[] {
   const { source, target } = languagesForDirection(direction);
   switch (message.type) {
     case "conversation.item.input_audio_transcription.completed": {
       const transcript = message.transcript?.trim();
-      if (!transcript) return undefined;
+      if (!transcript) return [];
+      gate.sourceChecked = true;
       if (!transcriptMatchesLockedLanguage(transcript, source)) {
         gate.rejected = true;
-        return undefined;
+        gate.pendingAudio = [];
+        return [];
       }
       gate.sourceTranscript = transcript;
-      return {
-        type: "conversation.item.input_audio_transcription.completed",
-        transcript: message.transcript,
-      };
+      return [
+        {
+          type: "conversation.item.input_audio_transcription.completed",
+          transcript: message.transcript,
+        },
+        ...releasePendingAudio(gate),
+      ];
     }
     case "response.audio_transcript.done": {
       const transcript = message.transcript?.trim();
-      if (!transcript || gate.rejected) return undefined;
+      if (!transcript || gate.rejected) return [];
       if (
         !translationMatchesTargetLanguage(
           transcript,
@@ -140,19 +181,28 @@ export function clientEventForServerMessage(
         )
       ) {
         gate.rejected = true;
-        return undefined;
+        gate.pendingAudio = [];
+        return [];
       }
-      return {
-        type: "response.audio_transcript.done",
-        transcript: message.transcript,
-      };
+      return [
+        {
+          type: "response.audio_transcript.done",
+          transcript: message.transcript,
+        },
+      ];
     }
-    case "response.audio.delta":
-      return message.delta && !gate.rejected
-        ? { type: "response.audio.delta", delta: message.delta }
-        : undefined;
+    case "response.audio.delta": {
+      if (!message.delta || gate.rejected) return [];
+      // The answer can outrun the transcript it was built from; hold it until
+      // the language has been judged rather than speak a misheard turn.
+      if (!gate.sourceChecked) {
+        gate.pendingAudio.push(message.delta);
+        return [];
+      }
+      return [{ type: "response.audio.delta", delta: message.delta }];
+    }
     default:
-      return undefined;
+      return [];
   }
 }
 
@@ -311,6 +361,11 @@ export class RealtimeTranslationSession {
             return;
           case "response.done":
             if (message.response?.status === "completed") {
+              // A turn that never produced a source transcript still gets to
+              // speak; one the gate refused stays silent.
+              for (const event of releasePendingAudio(this.gate)) {
+                this.onEvent(event);
+              }
               this.finishTurn();
             } else {
               this.failTurn(
@@ -337,12 +392,13 @@ export class RealtimeTranslationSession {
           }
         }
 
-        const event = clientEventForServerMessage(
+        for (const event of clientEventForServerMessage(
           message,
           this.direction,
           this.gate,
-        );
-        if (event) this.onEvent(event);
+        )) {
+          this.onEvent(event);
+        }
       });
 
       socket.on("unexpected-response", (_request, response) => {
