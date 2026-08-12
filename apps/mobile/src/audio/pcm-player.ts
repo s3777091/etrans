@@ -23,6 +23,12 @@ export class PcmJitterPlayer {
     const sampleCount = Math.floor(pcm.byteLength / 2);
     if (sampleCount <= 0) return;
 
+    // Recording stops between turns and the session is set not to mix, so the
+    // context can be left suspended by an interruption. A suspended context
+    // accepts buffers and plays none of them.
+    if (this.context.state === "suspended") {
+      void this.context.resume();
+    }
     if (!this.queue) this.createQueue();
     const audioBuffer = this.context.createBuffer(
       1,

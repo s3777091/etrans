@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
+import { configurePlaybackRouting } from "./src/audio/audio-session";
 import { useInterpreterAudio } from "./src/audio/use-interpreter-audio";
 import { LiveInterpreterEngine } from "./src/interpreter/engine";
 import { appendTranscript } from "./src/interpreter/transcript";
@@ -416,6 +417,9 @@ export default function App() {
         playsInSilentMode: true,
         interruptionMode: "doNotMix",
       });
+      // `allowsRecording` puts iOS in playAndRecord, which speaks through the
+      // earpiece until the speaker is asked for explicitly.
+      await configurePlaybackRouting();
     })().catch(handleAudioError);
 
     return () => {

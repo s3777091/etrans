@@ -6,6 +6,7 @@ import type {
   VoiceTranslationModel,
 } from "../qwen/types";
 import type { LiveInterpreterEngine } from "../interpreter/engine";
+import { configurePlaybackRouting } from "./audio-session";
 import { Pcm16InputProcessor } from "./pcm-input";
 
 const MAX_STARTUP_CHUNKS = 8;
@@ -75,6 +76,9 @@ export function useInterpreterAudio({
           stream.stop();
           return false;
         }
+        // Starting the microphone reconfigures the session, so the speaker
+        // route has to be claimed back after it, not before.
+        await configurePlaybackRouting();
 
         await engine.beginTurn(direction, model);
         readyRef.current = true;
