@@ -2,26 +2,22 @@ import { AudioManager } from "react-native-audio-api";
 import { Platform } from "react-native";
 
 /**
- * The interpreter records and speaks at the same time, so iOS puts the audio
- * session in `playAndRecord`. That category sends output to the receiver --
- * the earpiece you hold to your ear -- unless `defaultToSpeaker` is asked for,
- * which is why the translation arrived as text but was never heard.
+ * expo-audio deactivates the whole AVAudioSession when the microphone stops
+ * (`setActive(false)` in its AudioStream), and the spoken translation arrives
+ * a moment after the speaker releases -- into a session that is no longer
+ * running. The text appeared and nothing was ever heard.
  *
- * expo-audio owns the recording side of the session and re-applies its own
- * options whenever the microphone starts, so this runs again after every
- * stream start rather than once at launch.
+ * Reactivating it is the whole job. The category deliberately matches the one
+ * the patched expo-audio recorder installs: `voiceChat` carries the echo
+ * cancellation that stops the microphone hearing our own translation back, and
+ * `defaultToSpeaker` keeps playAndRecord off the earpiece.
  */
-export async function configurePlaybackRouting(): Promise<void> {
+export async function activatePlaybackSession(): Promise<void> {
   if (Platform.OS !== "ios") return;
   AudioManager.setAudioSessionOptions({
     iosCategory: "playAndRecord",
-    iosMode: "spokenAudio",
-    iosOptions: [
-      "defaultToSpeaker",
-      "allowBluetoothA2DP",
-      "allowBluetoothHFP",
-      "allowAirPlay",
-    ],
+    iosMode: "voiceChat",
+    iosOptions: ["defaultToSpeaker", "allowBluetoothHFP"],
   });
   await AudioManager.setAudioSessionActivity(true);
 }
