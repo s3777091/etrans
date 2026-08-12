@@ -3,6 +3,11 @@ import {
   type AudioBufferQueueSourceNode,
 } from "react-native-audio-api";
 
+import {
+  activatePlaybackSession,
+  releasePlaybackSession,
+} from "./audio-session";
+
 const OUTPUT_SAMPLE_RATE = 24_000;
 const START_BUFFER_MS = 40;
 const MAX_START_WAIT_MS = 70;
@@ -13,6 +18,7 @@ export class PcmJitterPlayer {
   private started = false;
   private queuedMs = 0;
   private startTimer: ReturnType<typeof setTimeout> | undefined;
+  private waking = false;
   private readonly durations = new Map<string, number>();
 
   constructor(private readonly onQueueChanged: (queueMs: number) => void) {
@@ -23,12 +29,13 @@ export class PcmJitterPlayer {
     const sampleCount = Math.floor(pcm.byteLength / 2);
     if (sampleCount <= 0) return;
 
-    // Recording stops between turns and the session is set not to mix, so the
-    // context can be left suspended by an interruption. A suspended context
-    // accepts buffers and plays none of them.
-    if (this.context.state === "suspended") {
-      void this.context.resume();
-    }
+    // expo-audio deactivates the audio session when the microphone stops, and
+    // that native teardown can land *after* any attempt to undo it from the
+    // same moment -- which is why restoring the session at stop time did not
+    // hold. The translation arrives a network round trip later, so the session
+    // is claimed back here, where playback actually begins and nothing else is
+    // still tearing it down.
+    if (!this.started) void this.wakeOutput();
     if (!this.queue) this.createQueue();
     const audioBuffer = this.context.createBuffer(
       1,
@@ -75,7 +82,24 @@ export class PcmJitterPlayer {
 
   async dispose(): Promise<void> {
     this.clear();
+    // Never leave the session held open behind a closing app.
+    await releasePlaybackSession().catch(() => undefined);
     await this.context.close();
+  }
+
+  /** Reactivate the session and the context, once per burst of audio. */
+  private async wakeOutput(): Promise<void> {
+    if (this.waking) return;
+    this.waking = true;
+    try {
+      await activatePlaybackSession();
+      if (this.context.state === "suspended") await this.context.resume();
+    } catch {
+      // Playback is attempted regardless; a failed wake is not worth dropping
+      // the sentence over.
+    } finally {
+      this.waking = false;
+    }
   }
 
   private start(): void {
@@ -102,6 +126,10 @@ export class PcmJitterPlayer {
         this.started = false;
         this.queue = undefined;
         this.createQueue();
+        // The answer has finished speaking, so the phone gets its speaker
+        // back. Holding an active playAndRecord session any longer takes the
+        // route away from every other app on the phone.
+        void releasePlaybackSession().catch(() => undefined);
       }
     };
     this.queue = queue;

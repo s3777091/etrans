@@ -10,6 +10,7 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
+  AppState,
   Animated,
   Image,
   NativeModules,
@@ -22,7 +23,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { activatePlaybackSession } from "./src/audio/audio-session";
+import { releasePlaybackSession } from "./src/audio/audio-session";
 import { useInterpreterAudio } from "./src/audio/use-interpreter-audio";
 import { LiveInterpreterEngine } from "./src/interpreter/engine";
 import { appendTranscript } from "./src/interpreter/transcript";
@@ -417,8 +418,6 @@ export default function App() {
         playsInSilentMode: true,
         interruptionMode: "doNotMix",
       });
-      // So the very first turn can be heard before any recording has run.
-      await activatePlaybackSession();
     })().catch(handleAudioError);
 
     return () => {
@@ -432,6 +431,18 @@ export default function App() {
     },
     [engine],
   );
+
+  // Leaving the app mid-sentence must not leave its audio session held: an
+  // active playAndRecord session belongs to the whole phone, and another app
+  // that wants the speaker gets told the speaker is broken.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next !== "active") {
+        void releasePlaybackSession().catch(() => undefined);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (!permissionGranted || mode !== "translate") return;
