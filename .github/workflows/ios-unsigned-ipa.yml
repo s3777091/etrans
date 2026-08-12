@@ -71,6 +71,17 @@ jobs:
       # live-adapter tự dùng {}.
       EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI: ${{ vars.EXPO_PUBLIC_QWEN_HOTWORDS_ZH_TO_VI }}
       EXPO_PUBLIC_QWEN_HOTWORDS_VI_TO_ZH: ${{ vars.EXPO_PUBLIC_QWEN_HOTWORDS_VI_TO_ZH }}
+      # react-native-audio-api TẢI FFmpeg dựng sẵn lúc `pod install` (podspec
+      # gọi scripts/download-prebuilt-binaries.sh). Thư mục ios/ nằm trong
+      # .gitignore nên mỗi lần build đều prebuild + pod install lại, tức là lần
+      # nào cũng phụ thuộc vào cú tải đó. Tải hụt một cái là link chết với cả
+      # loạt ký hiệu _av_* không tìm thấy, dù mã nguồn không đổi một dòng.
+      #
+      # App này chỉ phát PCM thô: AudioContext.createBuffer + hàng đợi buffer.
+      # Không decode mp3, không stream, không đọc file audio — tức là không
+      # đụng tới FFmpeg. Tắt hẳn cho build khỏi phụ thuộc mạng, và .ipa nhẹ đi.
+      # Bật lại (bỏ dòng này) nếu sau này dùng decodeAudioData hoặc StreamerNode.
+      DISABLE_AUDIOAPI_FFMPEG: '1'
 
     steps:
       - uses: actions/checkout@v4
