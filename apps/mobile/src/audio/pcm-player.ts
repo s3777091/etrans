@@ -12,13 +12,35 @@ const OUTPUT_SAMPLE_RATE = 24_000;
 const START_BUFFER_MS = 40;
 const MAX_START_WAIT_MS = 70;
 
+/** What playback did for one turn, reported so silence can be diagnosed. */
+export interface PlaybackDiagnostics {
+  chunks: number;
+  bytes: number;
+  queuedMs: number;
+  started: boolean;
+  stateAtFirstChunk?: string;
+  stateAfterWake?: string;
+  wake?: string;
+  resume?: string;
+  startError?: string;
+}
+
+function emptyDiagnostics(): PlaybackDiagnostics {
+  return { chunks: 0, bytes: 0, queuedMs: 0, started: false };
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class PcmJitterPlayer {
   private readonly context = new AudioContext();
   private queue: AudioBufferQueueSourceNode | undefined;
   private started = false;
   private queuedMs = 0;
   private startTimer: ReturnType<typeof setTimeout> | undefined;
-  private waking = false;
+  private wakePromise: Promise<void> | undefined;
+  private report: PlaybackDiagnostics = emptyDiagnostics();
   private readonly durations = new Map<string, number>();
 
   constructor(private readonly onQueueChanged: (queueMs: number) => void) {
@@ -35,7 +57,14 @@ export class PcmJitterPlayer {
     // hold. The translation arrives a network round trip later, so the session
     // is claimed back here, where playback actually begins and nothing else is
     // still tearing it down.
-    if (!this.started) void this.wakeOutput();
+    if (!this.started) {
+      if (!this.report.chunks) {
+        this.report.stateAtFirstChunk = this.context.state;
+      }
+      void this.wakeOutput();
+    }
+    this.report.chunks += 1;
+    this.report.bytes += pcm.byteLength;
     if (!this.queue) this.createQueue();
     const audioBuffer = this.context.createBuffer(
       1,
@@ -75,6 +104,7 @@ export class PcmJitterPlayer {
     this.queue = undefined;
     this.started = false;
     this.queuedMs = 0;
+    this.wakePromise = undefined;
     this.durations.clear();
     this.onQueueChanged(0);
     this.createQueue();
@@ -88,18 +118,22 @@ export class PcmJitterPlayer {
   }
 
   /** Reactivate the session and the context, once per burst of audio. */
-  private async wakeOutput(): Promise<void> {
-    if (this.waking) return;
-    this.waking = true;
-    try {
-      await activatePlaybackSession();
-      if (this.context.state === "suspended") await this.context.resume();
-    } catch {
-      // Playback is attempted regardless; a failed wake is not worth dropping
-      // the sentence over.
-    } finally {
-      this.waking = false;
-    }
+  private wakeOutput(): Promise<void> {
+    this.wakePromise ??= (async () => {
+      try {
+        await activatePlaybackSession();
+        this.report.wake = "ok";
+      } catch (error) {
+        this.report.wake = describeError(error);
+      }
+      try {
+        if (this.context.state === "suspended") await this.context.resume();
+      } catch (error) {
+        this.report.resume = describeError(error);
+      }
+      this.report.stateAfterWake = this.context.state;
+    })();
+    return this.wakePromise;
   }
 
   private start(): void {
@@ -109,7 +143,27 @@ export class PcmJitterPlayer {
       this.startTimer = undefined;
     }
     this.started = true;
-    this.queue.start(this.context.currentTime);
+    const queue = this.queue;
+    // The session must be awake BEFORE the queue starts. Kicking the wake off
+    // and starting in the same tick -- which is what the first chunk did, being
+    // longer than the start threshold on its own -- starts playback into the
+    // session expo-audio has just deactivated, and nothing is heard.
+    void this.wakeOutput().then(() => {
+      if (this.queue !== queue || !this.started) return;
+      try {
+        queue.start(this.context.currentTime);
+        this.report.started = true;
+      } catch (error) {
+        this.report.startError = describeError(error);
+      }
+    });
+  }
+
+  /** Hand over what playback actually did this turn, and start counting again. */
+  takeDiagnostics(): PlaybackDiagnostics {
+    const report = { ...this.report, queuedMs: Math.round(this.queuedMs) };
+    this.report = emptyDiagnostics();
+    return report;
   }
 
   private createQueue(): void {

@@ -480,6 +480,22 @@ export async function createServer(config: BackendConfig) {
     },
   );
 
+  // Playback silence cannot be read off the phone, so the app reports what its
+  // player did each turn and it lands in this log. Counts and audio-session
+  // states only -- never speech, transcripts, or anything about the speaker.
+  server.post<{ Body: Record<string, unknown> }>(
+    "/v1/debug/audio",
+    {
+      bodyLimit: 4_096,
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } },
+    },
+    async (request, reply) => {
+      request.log.info({ playback: request.body }, "Phone playback report");
+      reply.header("Cache-Control", "no-store");
+      return { ok: true };
+    },
+  );
+
   server.post<{ Body: TranscribeBody }>(
     "/v1/agent/transcribe",
     {

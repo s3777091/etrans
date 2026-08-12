@@ -1,3 +1,5 @@
+import { Platform } from "react-native";
+
 import { PcmJitterPlayer } from "../audio/pcm-player";
 import { QwenLiveTranslateAdapter } from "../qwen/live-adapter";
 import {
@@ -184,12 +186,32 @@ export class LiveInterpreterEngine {
     });
     adapter.onTurnComplete(() => {
       if (this.adapter !== adapter) return;
+      this.reportPlayback();
       this.turnCompleteCallbacks.forEach((callback) => callback());
     });
     adapter.onError((error) => {
       if (this.adapter !== adapter) return;
       this.errorCallbacks.forEach((callback) => callback(error));
     });
+  }
+
+  /**
+   * Silent playback cannot be diagnosed from the phone, so each turn reports
+   * what the player actually did -- counts and audio-session states, no speech
+   * and nothing about the speaker -- to the backend log.
+   */
+  private reportPlayback(): void {
+    const diagnostics = this.player.takeDiagnostics();
+    if (!diagnostics.chunks) return;
+    void fetch(new URL("/v1/debug/audio", this.apiBaseUrl).toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: Platform.OS,
+        direction: this.direction,
+        ...diagnostics,
+      }),
+    }).catch(() => undefined);
   }
 
   private updateMetrics(update: Partial<InterpreterMetrics>): void {

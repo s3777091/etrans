@@ -67,6 +67,24 @@ describe("streaming speech segmentation", () => {
     expect(segmenter.flush()).toBeUndefined();
   });
 
+  it("releases a short sentence once the pause is clearly an ending", () => {
+    const segmenter = new StreamingSpeechSegmenter();
+    const emitted: Buffer[] = [];
+    // Well under minimumUtteranceMs, so only the long-pause rule can free it.
+    for (let index = 0; index < 5; index += 1) {
+      emitted.push(...segmenter.push(tone(2_400)));
+    }
+    for (let index = 0; index < 8; index += 1) {
+      emitted.push(...segmenter.push(silence()));
+    }
+    expect(emitted).toEqual([]);
+
+    for (let index = 0; index < 6; index += 1) {
+      emitted.push(...segmenter.push(silence()));
+    }
+    expect(emitted).toHaveLength(1);
+  });
+
   it("measures PCM energy", () => {
     expect(analyzePcm16(silence())).toEqual({ rms: 0, peak: 0 });
     expect(analyzePcm16(tone(2_000))).toEqual({ rms: 2_000, peak: 2_000 });

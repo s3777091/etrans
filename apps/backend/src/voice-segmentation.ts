@@ -15,6 +15,13 @@ export interface SpeechSegmenterOptions {
    * must therefore extend the segment, never cut it.
    */
   minimumUtteranceMs: number;
+  /**
+   * A pause this long ends the utterance whatever its length. Waiting for
+   * `minimumUtteranceMs` keeps a breath from splitting a sentence, but it also
+   * makes a short finished one sit until the speaker lets go. Nobody breathes
+   * this long mid-sentence, so a gap this size is an ending, not a pause.
+   */
+  longSilenceMs: number;
   /** Keep a little audio before speech so initial consonants are not clipped. */
   preRollMs: number;
   /** Safety boundary for speakers who never pause. */
@@ -27,6 +34,7 @@ export const DEFAULT_SPEECH_SEGMENTER_OPTIONS: SpeechSegmenterOptions = {
   silenceMs: 700,
   minimumVoicedMs: 250,
   minimumUtteranceMs: 1_500,
+  longSilenceMs: 1_200,
   preRollMs: 200,
   maximumSegmentMs: 12_000,
   minimumRms: 420,
@@ -94,10 +102,14 @@ export class StreamingSpeechSegmenter {
 
     // A pause only ends the utterance once there is enough speech in it for
     // the ASR to place the language; otherwise the pause is swallowed and the
-    // segment keeps growing into the next words.
+    // segment keeps growing into the next words. A pause long enough to be an
+    // ending rather than a breath closes it either way, so a short sentence is
+    // not held back until the speaker lets go.
     const naturalBoundary =
-      this.trailingSilenceMs >= this.options.silenceMs &&
-      this.voicedDurationMs >= this.options.minimumUtteranceMs;
+      (this.trailingSilenceMs >= this.options.silenceMs &&
+        this.voicedDurationMs >= this.options.minimumUtteranceMs) ||
+      (this.trailingSilenceMs >= this.options.longSilenceMs &&
+        this.voicedDurationMs >= this.options.minimumVoicedMs);
     const safetyBoundary =
       this.activeDurationMs >= this.options.maximumSegmentMs &&
       this.voicedDurationMs >= this.options.minimumVoicedMs;
