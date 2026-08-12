@@ -11,14 +11,37 @@ describe("streaming speech segmentation", () => {
   it("commits speech after a natural pause while the stream stays open", () => {
     const segmenter = new StreamingSpeechSegmenter();
     const emitted: Buffer[] = [];
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 16; index += 1) {
       emitted.push(...segmenter.push(tone(2_400)));
     }
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       emitted.push(...segmenter.push(silence()));
     }
     expect(emitted).toHaveLength(1);
-    expect(emitted[0]?.length).toBeGreaterThan(CHUNK_SAMPLES * 2 * 5);
+    expect(emitted[0]?.length).toBeGreaterThan(CHUNK_SAMPLES * 2 * 16);
+  });
+
+  it("carries a mid-sentence breath into one segment instead of cutting", () => {
+    const segmenter = new StreamingSpeechSegmenter();
+    const emitted: Buffer[] = [];
+    // Half a sentence, a pause long enough to look final, then the rest. The
+    // ASR reads a sub-second slice of Vietnamese as Chinese, so neither half
+    // may leave on its own.
+    for (let index = 0; index < 6; index += 1) {
+      emitted.push(...segmenter.push(tone(2_400)));
+    }
+    for (let index = 0; index < 9; index += 1) {
+      emitted.push(...segmenter.push(silence()));
+    }
+    expect(emitted).toEqual([]);
+
+    for (let index = 0; index < 12; index += 1) {
+      emitted.push(...segmenter.push(tone(2_400)));
+    }
+    for (let index = 0; index < 8; index += 1) {
+      emitted.push(...segmenter.push(silence()));
+    }
+    expect(emitted).toHaveLength(1);
   });
 
   it("ignores steady noise and short taps", () => {

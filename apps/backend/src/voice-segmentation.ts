@@ -6,6 +6,15 @@ export interface SpeechSegmenterOptions {
   silenceMs: number;
   /** Reject clicks, taps, and other very short noises. */
   minimumVoicedMs: number;
+  /**
+   * Voiced audio a segment must hold before a pause is allowed to close it.
+   * The ASR identifies the spoken language from the segment alone, and on
+   * anything shorter it guesses: measured against this endpoint, sub-second
+   * slices of Vietnamese speech come back as Chinese ("跟。", "可能。") while
+   * the same sentence sent whole transcribes correctly. Mid-sentence breaths
+   * must therefore extend the segment, never cut it.
+   */
+  minimumUtteranceMs: number;
   /** Keep a little audio before speech so initial consonants are not clipped. */
   preRollMs: number;
   /** Safety boundary for speakers who never pause. */
@@ -15,8 +24,9 @@ export interface SpeechSegmenterOptions {
 }
 
 export const DEFAULT_SPEECH_SEGMENTER_OPTIONS: SpeechSegmenterOptions = {
-  silenceMs: 450,
+  silenceMs: 700,
   minimumVoicedMs: 250,
+  minimumUtteranceMs: 1_500,
   preRollMs: 200,
   maximumSegmentMs: 12_000,
   minimumRms: 420,
@@ -82,9 +92,12 @@ export class StreamingSpeechSegmenter {
       this.trailingSilenceMs += durationMs;
     }
 
+    // A pause only ends the utterance once there is enough speech in it for
+    // the ASR to place the language; otherwise the pause is swallowed and the
+    // segment keeps growing into the next words.
     const naturalBoundary =
       this.trailingSilenceMs >= this.options.silenceMs &&
-      this.voicedDurationMs >= this.options.minimumVoicedMs;
+      this.voicedDurationMs >= this.options.minimumUtteranceMs;
     const safetyBoundary =
       this.activeDurationMs >= this.options.maximumSegmentMs &&
       this.voicedDurationMs >= this.options.minimumVoicedMs;

@@ -1,11 +1,13 @@
 import WebSocket, { type RawData } from "ws";
 
+import { transcriptMatchesLockedLanguage } from "./agent/transcribe.js";
 import { type BackendConfig } from "./config.js";
 import {
   languagesForDirection,
   type InterpreterDirection,
 } from "./models.js";
 import { buildQwenRealtimeUrl } from "./qwen-urls.js";
+import { translationMatchesTargetLanguage } from "./voice-translation.js";
 
 const TURN_TIMEOUT_MS = 30_000;
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -14,12 +16,29 @@ const AUDIO_FRAME_BYTES = 3_200;
 
 /**
  * The dedicated LiveTranslate realtime model ships its own ASR + translation
- * pipeline. Setting input_audio_transcription.model turns the source-language
- * recognition on, and input_audio_transcription.language then LOCKS it so the
- * model never auto-detects (the bug: Vietnamese heard as Chinese). The
- * translation.language field points the output at the target language.
+ * pipeline. input_audio_transcription.model turns source-language recognition
+ * on and .language declares which language to expect. Measured against the
+ * endpoint, that field is a hint and not a lock: the same sentence sent under
+ * language "zh" and under "vi" transcribes identically, because the ASR
+ * reports the language it hears. What it does honour is length — given a whole
+ * utterance it identifies Vietnamese correctly, so the segmenter, not this
+ * field, is what keeps the source language right.
  */
 const LIVE_TRANSLATE_ASR_MODEL = "qwen3-asr-flash-realtime";
+
+/**
+ * Per-turn state for the language gate. The source transcript arrives before
+ * the translation and its audio, so a segment the ASR heard in the wrong
+ * language can be caught before any of it reaches the phone.
+ */
+interface TurnLanguageGate {
+  sourceTranscript: string;
+  rejected: boolean;
+}
+
+export function createTurnLanguageGate(): TurnLanguageGate {
+  return { sourceTranscript: "", rejected: false };
+}
 
 interface RealtimeServerMessage {
   type?: string;
@@ -65,9 +84,8 @@ export function createTranslationSessionUpdate(
       voice,
       input_audio_format: "pcm",
       output_audio_format: "pcm",
-      // `model` turns source-language recognition on; `language` then LOCKS it
-      // so the model never auto-detects. Without this the generic realtime
-      // model hears Vietnamese as Chinese and "translates" Chinese->Chinese.
+      // Declares the language this turn is expected in. The model treats it as
+      // a hint, so the backend still verifies what comes back.
       input_audio_transcription: {
         model: LIVE_TRANSLATE_ASR_MODEL,
         language: source,
@@ -84,27 +102,53 @@ export function createTranslationSessionUpdate(
  * Qwen's realtime events carry the phone's own event names for the parts the
  * app consumes, except for the ones it must not see: partial transcripts can
  * split mid-word, and turn bookkeeping belongs to the route.
+ *
+ * Everything is also checked against the direction the gesture chose. When the
+ * ASR reports the wrong script — Vietnamese speech coming back as Chinese, the
+ * failure this endpoint makes on a short or unclear segment — the whole turn is
+ * dropped rather than shown, because its translation and audio were built on
+ * that same misheard text.
  */
 export function clientEventForServerMessage(
   message: RealtimeServerMessage,
+  direction: InterpreterDirection,
+  gate: TurnLanguageGate,
 ): Record<string, unknown> | undefined {
+  const { source, target } = languagesForDirection(direction);
   switch (message.type) {
-    case "conversation.item.input_audio_transcription.completed":
-      return message.transcript?.trim()
-        ? {
-            type: "conversation.item.input_audio_transcription.completed",
-            transcript: message.transcript,
-          }
-        : undefined;
-    case "response.audio_transcript.done":
-      return message.transcript?.trim()
-        ? {
-            type: "response.audio_transcript.done",
-            transcript: message.transcript,
-          }
-        : undefined;
+    case "conversation.item.input_audio_transcription.completed": {
+      const transcript = message.transcript?.trim();
+      if (!transcript) return undefined;
+      if (!transcriptMatchesLockedLanguage(transcript, source)) {
+        gate.rejected = true;
+        return undefined;
+      }
+      gate.sourceTranscript = transcript;
+      return {
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: message.transcript,
+      };
+    }
+    case "response.audio_transcript.done": {
+      const transcript = message.transcript?.trim();
+      if (!transcript || gate.rejected) return undefined;
+      if (
+        !translationMatchesTargetLanguage(
+          transcript,
+          target,
+          gate.sourceTranscript,
+        )
+      ) {
+        gate.rejected = true;
+        return undefined;
+      }
+      return {
+        type: "response.audio_transcript.done",
+        transcript: message.transcript,
+      };
+    }
     case "response.audio.delta":
-      return message.delta
+      return message.delta && !gate.rejected
         ? { type: "response.audio.delta", delta: message.delta }
         : undefined;
     default:
@@ -132,6 +176,8 @@ export class RealtimeTranslationSession {
       }
     | undefined;
   private closed = false;
+  /** Reset per sentence: one misheard segment must not mute the next. */
+  private gate = createTurnLanguageGate();
 
   constructor(
     private readonly config: BackendConfig,
@@ -167,6 +213,7 @@ export class RealtimeTranslationSession {
       );
     }
 
+    this.gate = createTurnLanguageGate();
     return new Promise<void>((resolve, reject) => {
       this.turn = {
         resolve,
@@ -290,7 +337,11 @@ export class RealtimeTranslationSession {
           }
         }
 
-        const event = clientEventForServerMessage(message);
+        const event = clientEventForServerMessage(
+          message,
+          this.direction,
+          this.gate,
+        );
         if (event) this.onEvent(event);
       });
 
