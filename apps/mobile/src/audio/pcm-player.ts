@@ -151,7 +151,12 @@ export class PcmJitterPlayer {
     void this.wakeOutput().then(() => {
       if (this.queue !== queue || !this.started) return;
       try {
-        queue.start(this.context.currentTime);
+        // The offset is passed explicitly because the library cannot be called
+        // without it: start(when, offset = -1) then rejects its own default
+        // with "offset must be a finite non-negative number: -1", so every
+        // one-argument call throws and the queue never plays. Zero is the
+        // start of the queue, which is where a fresh burst begins anyway.
+        queue.start(this.context.currentTime, 0);
         this.report.started = true;
       } catch (error) {
         this.report.startError = describeError(error);
